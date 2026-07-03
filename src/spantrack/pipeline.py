@@ -49,7 +49,7 @@ def run(
     if book_dir.exists():
         shutil.rmtree(book_dir)
 
-    names = epub_container.unzip(config.input, book_dir)
+    archive_order = epub_container.unzip(config.input, book_dir)
     package = epub2_upgrade.upgrade(book_dir, modified=_source_modified(config.input))
 
     landmarks = narration_set.read_landmarks(book_dir, package)
@@ -71,7 +71,7 @@ def run(
     if config.dry_run:
         return 0
 
-    epub_container.repack(book_dir, config.output, order=names)
+    epub_container.repack(book_dir, config.output, order=archive_order)
     reporter.info(f"wrote {config.output}")
 
     if config.validate:

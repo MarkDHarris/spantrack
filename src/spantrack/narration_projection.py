@@ -14,6 +14,7 @@ from pathlib import Path
 
 from lxml import etree
 
+from spantrack.lxml_reading import hardened_parser, qname
 from spantrack.narration_set import Document
 from spantrack.opf import XmlElement
 
@@ -95,14 +96,16 @@ def _character_count(path: Path) -> int:
 
     etree.strip_elements(
         root,
-        _qn("script"),
-        _qn("style"),
+        qname(_XHTML_NS, "script"),
+        qname(_XHTML_NS, "style"),
         with_tail=False,
     )
-    body = root.find(_qn("body"))
+    body = root.find(qname(_XHTML_NS, "body"))
     if body is None:
         return 0
 
+    # itertext() yields only str at runtime; the isinstance narrow satisfies pyright
+    # strict against lxml-stubs' Iterator[str | bytes] and is not runtime-dead.
     text = "".join(chunk for chunk in body.itertext() if isinstance(chunk, str))
 
     return len(_WHITESPACE.sub(" ", text).strip())
@@ -120,9 +123,4 @@ def _parse_bitrate(bitrate: str) -> int:
 
 
 def _parse(path: Path) -> XmlElement:
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
-    return etree.fromstring(path.read_bytes(), parser)
-
-
-def _qn(tag: str) -> str:
-    return f"{{{_XHTML_NS}}}{tag}"
+    return etree.fromstring(path.read_bytes(), hardened_parser())

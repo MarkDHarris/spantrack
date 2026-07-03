@@ -91,7 +91,7 @@ def _ordered_members(source_dir: Path, order: Sequence[str] | None) -> list[str]
 
     ordered: list[str] = []
     for name in order or ():
-        if name != MIMETYPE_NAME and name in remaining:
+        if name in remaining:
             ordered.append(name)
             remaining.discard(name)
 

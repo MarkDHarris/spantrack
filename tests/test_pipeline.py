@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,14 +23,6 @@ class _RecordingReporter(ProgressReporter):
         self.projections.append(projection)
 
 
-def _read_tree(root: Path) -> dict[str, bytes]:
-    return {
-        p.relative_to(root).as_posix(): p.read_bytes()
-        for p in sorted(root.rglob("*"))
-        if p.is_file()
-    }
-
-
 def _config(epub: Path, tmp_path: Path, *extra: str):
     return cli.parse_args(
         [
@@ -43,7 +36,11 @@ def _config(epub: Path, tmp_path: Path, *extra: str):
     )
 
 
-def test_run_produces_round_trippable_output(minimal_epub_path: Path, tmp_path: Path):
+def test_run_produces_round_trippable_output(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+    read_file_tree: Callable[[Path], dict[str, bytes]],
+):
     config = _config(minimal_epub_path, tmp_path)
     code = pipeline.run(config)
 
@@ -56,7 +53,7 @@ def test_run_produces_round_trippable_output(minimal_epub_path: Path, tmp_path: 
     epub_container.unzip(minimal_epub_path, source)
     epub_container.unzip(config.output, result)
 
-    assert _read_tree(result) == _read_tree(source)
+    assert read_file_tree(result) == read_file_tree(source)
 
 
 def test_dry_run_writes_no_output(minimal_epub_path: Path, tmp_path: Path):

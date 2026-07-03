@@ -169,7 +169,7 @@ def test_rejects_href_escaping_container(tmp_path: Path):
         '<item id="ok" href="../../evil.xhtml" media-type="application/xhtml+xml"/>',
     )
 
-    with pytest.raises(opf.OpfError, match="escapes the container"):
+    with pytest.raises(opf.OpfError, match="outside the container"):
         opf.read_package(_write_container(tmp_path / "book", body))
 
 
@@ -178,7 +178,7 @@ def test_rejects_absolute_href(tmp_path: Path):
         '<item id="ok" href="/etc/passwd" media-type="application/xhtml+xml"/>',
     )
 
-    with pytest.raises(opf.OpfError, match="absolute"):
+    with pytest.raises(opf.OpfError, match="outside the container"):
         opf.read_package(_write_container(tmp_path / "book", body))
 
 

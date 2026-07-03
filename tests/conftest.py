@@ -1,4 +1,5 @@
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -63,3 +64,17 @@ def minimal_epub_path(tmp_path: Path, minimal_epub_src: Path) -> Path:
 @pytest.fixture
 def minimal_epub2_path(tmp_path: Path, minimal_epub2_src: Path) -> Path:
     return _zip_epub(minimal_epub2_src, tmp_path / "minimal2.epub")
+
+
+@pytest.fixture
+def read_file_tree() -> Callable[[Path], dict[str, bytes]]:
+    """Return a helper that snapshots a directory as {posix-relative-path: bytes}."""
+
+    def read(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        }
+
+    return read

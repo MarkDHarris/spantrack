@@ -1,28 +1,24 @@
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from spantrack import epub_container
 
-
-def _read_tree(root: Path) -> dict[str, bytes]:
-    return {
-        p.relative_to(root).as_posix(): p.read_bytes()
-        for p in sorted(root.rglob("*"))
-        if p.is_file()
-    }
+TreeReader = Callable[[Path], dict[str, bytes]]
 
 
 def test_unzip_reproduces_every_file(
     minimal_epub_path: Path,
     minimal_epub_src: Path,
     tmp_path: Path,
+    read_file_tree: TreeReader,
 ):
     dest = tmp_path / "book"
     epub_container.unzip(minimal_epub_path, dest)
 
-    assert _read_tree(dest) == _read_tree(minimal_epub_src)
+    assert read_file_tree(dest) == read_file_tree(minimal_epub_src)
 
 
 def test_unzip_preserves_mimetype_bytes(minimal_epub_path: Path, tmp_path: Path):
@@ -55,6 +51,7 @@ def test_unzip_rejects_path_traversal(tmp_path: Path):
 def test_repack_round_trip_preserves_every_file(
     minimal_epub_path: Path,
     tmp_path: Path,
+    read_file_tree: TreeReader,
 ):
     first = tmp_path / "first"
     names = epub_container.unzip(minimal_epub_path, first)
@@ -65,7 +62,7 @@ def test_repack_round_trip_preserves_every_file(
     second = tmp_path / "second"
     epub_container.unzip(out, second)
 
-    assert _read_tree(second) == _read_tree(first)
+    assert read_file_tree(second) == read_file_tree(first)
 
 
 def test_repack_writes_mimetype_first_stored_no_extra(
@@ -121,7 +118,11 @@ def test_repack_raises_without_mimetype(tmp_path: Path):
         epub_container.repack(src, tmp_path / "out.epub")
 
 
-def test_real_epub_round_trips_every_file(real_epub_path: Path, tmp_path: Path):
+def test_real_epub_round_trips_every_file(
+    real_epub_path: Path,
+    tmp_path: Path,
+    read_file_tree: TreeReader,
+):
     first = tmp_path / "first"
     names = epub_container.unzip(real_epub_path, first)
     out = tmp_path / "out.epub"
@@ -131,4 +132,4 @@ def test_real_epub_round_trips_every_file(real_epub_path: Path, tmp_path: Path):
     second = tmp_path / "second"
     epub_container.unzip(out, second)
 
-    assert _read_tree(second) == _read_tree(first)
+    assert read_file_tree(second) == read_file_tree(first)

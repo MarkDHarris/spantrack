@@ -15,7 +15,14 @@ from pathlib import Path
 
 from lxml import etree
 
-from spantrack.opf import ManifestItem, Package, SpineItem, XmlElement
+from spantrack.lxml_reading import hardened_parser, qname
+from spantrack.opf import (
+    ManifestItem,
+    Package,
+    SpineItem,
+    XmlElement,
+    resolve_within_container,
+)
 
 __all__ = [
     "Document",
@@ -99,7 +106,7 @@ def select(package: Package, *, landmarks: Mapping[str, str]) -> Selection:
             item,
             spine_item,
             nav_href=nav_href,
-            landmark=landmarks.get(_path(item.href)),
+            landmark=landmarks.get(_strip_fragment(item.href)),
             is_front_matter=index < body_start,
         )
         if reason is None:
@@ -146,7 +153,7 @@ def _body_start_index(package: Package, landmarks: Mapping[str, str]) -> int:
 
     for index, spine_item in enumerate(package.spine):
         item = package.item_by_id(spine_item.idref)
-        if item is not None and _path(item.href) == target:
+        if item is not None and _strip_fragment(item.href) == target:
             return index
 
     return 0
@@ -336,8 +343,8 @@ def read_landmarks(container_root: Path, package: Package) -> dict[str, str]:
 
     nav_dir = posixpath.dirname(nav.href)
     landmarks: dict[str, str] = {}
-    for anchor in landmarks_nav.iter(_qn(_XHTML_NS, "a")):
-        kind = anchor.get(_qn(_EPUB_NS, "type"))
+    for anchor in landmarks_nav.iter(qname(_XHTML_NS, "a")):
+        kind = anchor.get(qname(_EPUB_NS, "type"))
         href = anchor.get("href")
         if not kind or not href:
             continue
@@ -350,35 +357,23 @@ def read_landmarks(container_root: Path, package: Package) -> dict[str, str]:
 
 
 def _landmarks_nav(root: XmlElement) -> XmlElement | None:
-    for nav in root.iter(_qn(_XHTML_NS, "nav")):
-        if nav.get(_qn(_EPUB_NS, "type")) == "landmarks":
+    for nav in root.iter(qname(_XHTML_NS, "nav")):
+        if nav.get(qname(_EPUB_NS, "type")) == "landmarks":
             return nav
 
     return None
 
 
 def _parse(path: Path) -> XmlElement:
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
-    return etree.fromstring(path.read_bytes(), parser)
-
-
-def _qn(namespace: str, tag: str) -> str:
-    return f"{{{namespace}}}{tag}"
+    return etree.fromstring(path.read_bytes(), hardened_parser())
 
 
 def _resolve(base_dir: str, href: str) -> str:
-    # Mirror opf._resolve's boundary check: a landmark href that is absolute or escapes
-    # the container is dropped (empty) rather than seeding a bogus, unmatchable key.
-    path = _path(href)
-    if not path or "\\" in path or posixpath.isabs(path):
-        return ""
-
-    resolved = posixpath.normpath(posixpath.join(base_dir, path))
-    if resolved == ".." or resolved.startswith("../"):
-        return ""
-
-    return resolved
+    # A landmark href that is absolute or escapes the container is dropped (empty)
+    # rather than seeding a bogus, unmatchable key.
+    return resolve_within_container(base_dir, href) or ""
 
 
-def _path(href: str) -> str:
+def _strip_fragment(href: str) -> str:
+    """Drop the fragment from an href so it keys the fragment-less landmark map."""
     return href.partition("#")[0]

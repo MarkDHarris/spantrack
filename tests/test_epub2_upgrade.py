@@ -51,6 +51,8 @@ def _opf2(
     *,
     metadata: str | None = None,
 ) -> str:
+    # metadata=None uses a default <metadata> block; metadata="" omits the element
+    # entirely (drives the missing-metadata negative test); any other value is inlined.
     meta = (
         metadata
         if metadata is not None

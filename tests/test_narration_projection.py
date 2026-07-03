@@ -17,8 +17,8 @@ def _write_doc(root: Path, name: str, text: str) -> None:
     )
 
 
-def _doc(href: str, index: int = 0) -> Document:
-    return Document(item_id=f"id{index}", href=href, spine_index=index)
+def _doc(href: str, spine_index: int = 0) -> Document:
+    return Document(item_id=f"id{spine_index}", href=href, spine_index=spine_index)
 
 
 def test_counts_characters_across_documents(tmp_path: Path):

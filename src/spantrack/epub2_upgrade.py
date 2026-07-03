@@ -15,6 +15,7 @@ from typing import cast
 from lxml import etree
 
 from spantrack import opf
+from spantrack.lxml_reading import hardened_parser, qname
 from spantrack.opf import Package, XmlElement
 
 __all__ = ["upgrade"]
@@ -53,6 +54,12 @@ _GUIDE_TO_LANDMARK = {
 
 @dataclass(frozen=True, slots=True)
 class _NavEntry:
+    """One toc entry.
+
+    `href` is None for a target-less structural heading (a navPoint with no `<content>`
+    src), which `_append_list` renders as a `<span>` rather than an `<a>`.
+    """
+
     label: str
     href: str | None
     children: tuple["_NavEntry", ...] = field(default_factory=tuple)
@@ -108,7 +115,7 @@ def _toc_entries(
     ncx = package.ncx_item()
     entries: tuple[_NavEntry, ...] = ()
     if ncx is not None:
-        nav_map = _parse(container_root / ncx.href).find(_qn(_NCX_NS, "navMap"))
+        nav_map = _parse(container_root / ncx.href).find(qname(_NCX_NS, "navMap"))
         if nav_map is not None:
             entries = tuple(_nav_points(nav_map, posixpath.dirname(ncx.href), base_dir))
 
@@ -122,17 +129,19 @@ def _nav_points(
     ncx_dir: str,
     base_dir: str,
 ) -> Iterator[_NavEntry]:
-    for point in parent.iterfind(_qn(_NCX_NS, "navPoint")):
+    for point in parent.iterfind(qname(_NCX_NS, "navPoint")):
         children = tuple(_nav_points(point, ncx_dir, base_dir))
-        content = point.find(_qn(_NCX_NS, "content"))
+        content = point.find(qname(_NCX_NS, "content"))
         src = content.get("src") if content is not None else None
         if not src and not children:
             continue
 
-        label = point.find(f"{_qn(_NCX_NS, 'navLabel')}/{_qn(_NCX_NS, 'text')}")
+        label = point.find(f"{qname(_NCX_NS, 'navLabel')}/{qname(_NCX_NS, 'text')}")
         yield _NavEntry(
             label=(label.text or "").strip() if label is not None else "",
-            href=_relativize(_join(ncx_dir, src), base_dir) if src else None,
+            href=(
+                _relativize(_resolve_ncx_src(ncx_dir, src), base_dir) if src else None
+            ),
             children=children,
         )
 
@@ -194,26 +203,23 @@ def _render_nav(
     # Mapping[str, str] and rejects it, so cast past the stub gap.
     nsmap = cast("dict[str, str]", {None: _XHTML_NS, "epub": _EPUB_NS})
 
-    html = etree.Element(_qn(_XHTML_NS, "html"), nsmap=nsmap)
-    head = etree.SubElement(html, _qn(_XHTML_NS, "head"))
-    etree.SubElement(head, _qn(_XHTML_NS, "title")).text = "Contents"
-    body = etree.SubElement(html, _qn(_XHTML_NS, "body"))
+    html = etree.Element(qname(_XHTML_NS, "html"), nsmap=nsmap)
+    head = etree.SubElement(html, qname(_XHTML_NS, "head"))
+    etree.SubElement(head, qname(_XHTML_NS, "title")).text = "Contents"
+    body = etree.SubElement(html, qname(_XHTML_NS, "body"))
 
-    toc_nav = etree.SubElement(body, _qn(_XHTML_NS, "nav"))
-    toc_nav.set(_qn(_EPUB_NS, "type"), "toc")
-    toc_nav.set("id", "toc")
-    _append_list(toc_nav, toc)
+    _append_list(_nav_section(body, "toc"), toc)
 
     if landmarks:
-        landmarks_nav = etree.SubElement(body, _qn(_XHTML_NS, "nav"))
-        landmarks_nav.set(_qn(_EPUB_NS, "type"), "landmarks")
-        landmarks_nav.set("id", "landmarks")
-        landmarks_list = etree.SubElement(landmarks_nav, _qn(_XHTML_NS, "ol"))
+        landmarks_list = etree.SubElement(
+            _nav_section(body, "landmarks"),
+            qname(_XHTML_NS, "ol"),
+        )
         for landmark in landmarks:
-            item = etree.SubElement(landmarks_list, _qn(_XHTML_NS, "li"))
-            anchor = etree.SubElement(item, _qn(_XHTML_NS, "a"))
+            item = etree.SubElement(landmarks_list, qname(_XHTML_NS, "li"))
+            anchor = etree.SubElement(item, qname(_XHTML_NS, "a"))
             anchor.set("href", landmark.href)
-            anchor.set(_qn(_EPUB_NS, "type"), landmark.epub_type)
+            anchor.set(qname(_EPUB_NS, "type"), landmark.epub_type)
             anchor.text = landmark.label
 
     body_xml = etree.tostring(html, encoding="utf-8", pretty_print=True)
@@ -221,15 +227,24 @@ def _render_nav(
     return b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n' + body_xml
 
 
+def _nav_section(body: XmlElement, epub_type: str) -> XmlElement:
+    # Each EPUB 3 nav carries its epub:type as both the type and the element id.
+    nav = etree.SubElement(body, qname(_XHTML_NS, "nav"))
+    nav.set(qname(_EPUB_NS, "type"), epub_type)
+    nav.set("id", epub_type)
+
+    return nav
+
+
 def _append_list(parent: XmlElement, entries: tuple[_NavEntry, ...]) -> None:
-    ordered = etree.SubElement(parent, _qn(_XHTML_NS, "ol"))
+    ordered = etree.SubElement(parent, qname(_XHTML_NS, "ol"))
     for entry in entries:
-        item = etree.SubElement(ordered, _qn(_XHTML_NS, "li"))
+        item = etree.SubElement(ordered, qname(_XHTML_NS, "li"))
 
         # A navPoint without a target (a structural heading) becomes a <span> label; the
         # EPUB 3 nav grammar allows it and it keeps the child hierarchy intact.
         label_tag = "a" if entry.href is not None else "span"
-        label = etree.SubElement(item, _qn(_XHTML_NS, label_tag))
+        label = etree.SubElement(item, qname(_XHTML_NS, label_tag))
         label.text = entry.label
 
         if entry.href is not None:
@@ -240,7 +255,7 @@ def _append_list(parent: XmlElement, entries: tuple[_NavEntry, ...]) -> None:
 
 
 def _patch_opf(path: Path, *, nav_id: str, nav_href: str, modified: str) -> None:
-    tree = etree.parse(str(path), _parser())
+    tree = etree.parse(str(path), hardened_parser())
 
     root = tree.getroot()
     root.set("version", "3.0")
@@ -248,21 +263,21 @@ def _patch_opf(path: Path, *, nav_id: str, nav_href: str, modified: str) -> None
     # EPUB 3 mandates a dcterms:modified meta and a nav manifest item; without these
     # host elements the OPF cannot be upgraded, so fail loudly instead of emitting
     # invalid output.
-    metadata = root.find(_qn(_OPF_NS, "metadata"))
+    metadata = root.find(qname(_OPF_NS, "metadata"))
     if metadata is None:
         err_msg = "OPF has no <metadata> element to stamp dcterms:modified"
         raise opf.OpfError(err_msg)
 
-    manifest = root.find(_qn(_OPF_NS, "manifest"))
+    manifest = root.find(qname(_OPF_NS, "manifest"))
     if manifest is None:
         err_msg = "OPF has no <manifest> element to register the nav document"
         raise opf.OpfError(err_msg)
 
-    meta = etree.SubElement(metadata, _qn(_OPF_NS, "meta"))
+    meta = etree.SubElement(metadata, qname(_OPF_NS, "meta"))
     meta.set("property", "dcterms:modified")
     meta.text = modified
 
-    item = etree.SubElement(manifest, _qn(_OPF_NS, "item"))
+    item = etree.SubElement(manifest, qname(_OPF_NS, "item"))
     item.set("id", nav_id)
     item.set("href", nav_href)
     item.set("media-type", _XHTML_MEDIA_TYPE)
@@ -275,7 +290,7 @@ def _document_title(path: Path) -> str:
     if not path.is_file():
         return ""
 
-    title = _parse(path).find(f"{_qn(_XHTML_NS, 'head')}/{_qn(_XHTML_NS, 'title')}")
+    title = _parse(path).find(f"{qname(_XHTML_NS, 'head')}/{qname(_XHTML_NS, 'title')}")
 
     return (title.text or "").strip() if title is not None else ""
 
@@ -305,21 +320,18 @@ def _unused(base: str, taken: Callable[[str], bool]) -> str:
 
 
 def _parse(path: Path) -> XmlElement:
-    return etree.fromstring(path.read_bytes(), _parser())
+    return etree.fromstring(path.read_bytes(), hardened_parser())
 
 
-def _parser() -> etree.XMLParser:
-    # Neutralize XXE in untrusted EPUB inputs.
-    return etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+def _resolve_ncx_src(ncx_dir: str, src: str) -> str:
+    """Resolve an NCX `content/@src` to a container-relative path (fragment kept).
 
-
-def _qn(namespace: str, tag: str) -> str:
-    return f"{{{namespace}}}{tag}"
-
-
-def _join(base_dir: str, href: str) -> str:
-    path, _, fragment = href.partition("#")
-    resolved = posixpath.normpath(posixpath.join(base_dir, path))
+    Unlike `opf.resolve_within_container` this deliberately skips the container-escape
+    check: the result is only re-relativized into the generated nav, never used for
+    filesystem access.
+    """
+    path, _, fragment = src.partition("#")
+    resolved = posixpath.normpath(posixpath.join(ncx_dir, path))
 
     return f"{resolved}#{fragment}" if fragment else resolved
 
