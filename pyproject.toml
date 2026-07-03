@@ -1,0 +1,111 @@
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spantrack"
+description = "Convert text EPUBs into EPUB 3 with Media Overlays via local Kokoro TTS"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Efe Özyay", email = "hi@efe.cv" }]
+keywords = ["epub", "tts", "media-overlays", "kokoro", "audiobook"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Natural Language :: English",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Text Processing :: Markup",
+  "Typing :: Typed",
+]
+dynamic = ["version"]
+dependencies = []
+
+[dependency-groups]
+test   = ["pytest>=8,<9"]
+lint   = ["ruff>=0.6"]
+typing = ["pyright>=1.1"]
+
+dev = [
+  { include-group = "test" },
+  { include-group = "lint" },
+  { include-group = "typing" },
+]
+
+[project.urls]
+homepage = "https://github.com/ozefe/spantrack"
+source   = "https://github.com/ozefe/spantrack"
+issues   = "https://github.com/ozefe/spantrack/issues"
+
+[project.scripts]
+spantrack = "spantrack.cli:main"
+
+[tool.hatch.version]
+path = "src/spantrack/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spantrack"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths  = ["tests"]
+pythonpath = ["src"]   # import spantrack from src/ without an install
+
+[tool.ruff]
+src            = ["src"] # first-party source root for import sorting
+target-version = "py312" # warn on features unavailable in 3.12
+fix            = true    # auto-apply safe fixes
+show-fixes     = true    # log every applied fix
+
+[tool.ruff.format]
+docstring-code-format = true # reformat code snippets inside docstrings
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "D203",   # incorrect-blank-line-before-class - conflicts with D211
+  "D213",   # multi-line-summary-second-line    - conflicts with D212
+  "D107",   # __init__ doesn't need a docstring
+  "COM812", # missing-trailing-comma - conflicts with `ruff format`
+  "CPY001", # LICENSE file already covers the copyright
+  "FIX002", # TODOs are deliberate tech-debt markers, not lint failures
+  "TD003",  # the project's TODO(name) style does not require issue links
+]
+task-tags = ["TODO", "FIXME", "XXX", "HACK"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["spantrack"] # sort our imports into their own group
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true # *args/**kwargs may use Any without annotation
+
+[tool.ruff.lint.flake8-builtins]
+strict-checking = true # compare module names, not full paths (A005)
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 88 # documentation line length (W505)
+
+[tool.ruff.lint.pydocstyle]
+convention = "google" # enforce Google-style docstring sections
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+  "S101",    # `assert` is the point in pytest
+  "PLR2004", # magic-number compares are normal in test code
+  "ANN",     # over-annotating tests hurts readability
+  "D",       # docstrings on every test function are noise
+  "INP001",  # tests/ is intentionally not a package
+  "SLF001",  # tests legitimately exercise `_private` attrs
+  "EM101",   # short string literals in `raise` are fine in tests
+  "EM102",   # f-string in `raise` is fine in tests
+  "TRY003",  # exact messages are part of the test's assertion
+  "TRY301",  # `raise` inside `try` is fine in tests that exercise it
+]
+
+[tool.pyright]
+include          = ["src", "tests"]
+pythonVersion    = "3.12"
+typeCheckingMode = "strict"
+venvPath         = "."              # resolve third-party imports against the project venv
+venv             = ".venv"
