@@ -20,12 +20,12 @@ classifiers = [
   "Typing :: Typed",
 ]
 dynamic = ["version"]
-dependencies = []
+dependencies = ["lxml>=5,<6"]
 
 [dependency-groups]
 test   = ["pytest>=8,<9"]
 lint   = ["ruff>=0.6"]
-typing = ["pyright>=1.1"]
+typing = ["pyright>=1.1", "lxml-stubs>=0.5"]
 
 dev = [
   { include-group = "test" },

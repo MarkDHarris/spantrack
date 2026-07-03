@@ -1,0 +1,384 @@
+"""Select the spine-ordered set of content documents to narrate.
+
+Selection is explicit and inspectable: every document the spine offers is either
+included or excluded with a recorded reason, so the `--dry-run` printout can justify
+each decision with no silent heuristics. Skipping is driven by `epub:type` landmarks
+(cover/toc and the `bodymatter` start-of-reading marker), the nav document, spine
+`linear="no"`, and media type. CLI overrides layer on top in a later task.
+"""
+
+import posixpath
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
+from pathlib import Path
+
+from lxml import etree
+
+from spantrack.opf import ManifestItem, Package, SpineItem, XmlElement
+
+__all__ = [
+    "Document",
+    "Excluded",
+    "Selection",
+    "apply_overrides",
+    "read_landmarks",
+    "select",
+]
+
+_XHTML_NS = "http://www.w3.org/1999/xhtml"
+_EPUB_NS = "http://www.idpf.org/2007/ops"
+_XHTML_MEDIA_TYPE = "application/xhtml+xml"
+
+# epub:type landmark values whose target document is navigational or non-prose and must
+# never be narrated.
+_SKIP_LANDMARKS = frozenset({"cover", "toc", "loi", "lot", "landmarks"})
+_BODYMATTER = "bodymatter"
+
+# Default exclusion reasons that `--include` may override; structural reasons (nav,
+# non-content, unresolved-item) are never resurrected — those documents carry no prose.
+_SOFT_REASONS = frozenset({"non-linear", "front-matter"})
+
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    """A content document chosen for narration."""
+
+    item_id: str
+    href: str
+    spine_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class Excluded:
+    """A spine document left out of the narration set, with the reason why."""
+
+    item_id: str
+    href: str
+    reason: str
+    spine_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class Selection:
+    """The narration set with its exclusions and any dud override selectors.
+
+    `unmatched` holds override selectors that matched no manifest document, so the
+    caller can report a typo rather than silently narrating the wrong set.
+    """
+
+    documents: tuple[Document, ...]
+    excluded: tuple[Excluded, ...]
+    unmatched: tuple[str, ...] = ()
+
+
+def select(package: Package, *, landmarks: Mapping[str, str]) -> Selection:
+    """Choose the spine-ordered content documents to narrate.
+
+    Args:
+        package: The parsed (EPUB 3) package.
+        landmarks: Map of container-relative document href to its `epub:type` landmark,
+            as produced by `read_landmarks`.
+
+    Returns:
+        The selection, preserving spine order in both included and excluded lists.
+    """
+    nav = package.nav_item()
+    nav_href = nav.href if nav is not None else None
+    body_start = _body_start_index(package, landmarks)
+
+    documents: list[Document] = []
+    excluded: list[Excluded] = []
+    for index, spine_item in enumerate(package.spine):
+        item = package.item_by_id(spine_item.idref)
+        if item is None:
+            excluded.append(Excluded(spine_item.idref, "", "unresolved-item", index))
+            continue
+
+        reason = _exclusion_reason(
+            item,
+            spine_item,
+            nav_href=nav_href,
+            landmark=landmarks.get(_path(item.href)),
+            is_front_matter=index < body_start,
+        )
+        if reason is None:
+            documents.append(Document(item.item_id, item.href, index))
+        else:
+            excluded.append(Excluded(item.item_id, item.href, reason, index))
+
+    return Selection(tuple(documents), tuple(excluded))
+
+
+def _exclusion_reason(
+    item: ManifestItem,
+    spine_item: SpineItem,
+    *,
+    nav_href: str | None,
+    landmark: str | None,
+    is_front_matter: bool,
+) -> str | None:
+    if item.href == nav_href:
+        return "nav"
+
+    if not spine_item.linear:
+        return "non-linear"
+
+    if item.media_type != _XHTML_MEDIA_TYPE:
+        return "non-content"
+
+    if landmark in _SKIP_LANDMARKS:
+        return f"landmark:{landmark}"
+
+    if is_front_matter:
+        return "front-matter"
+
+    return None
+
+
+def _body_start_index(package: Package, landmarks: Mapping[str, str]) -> int:
+    target = next(
+        (href for href, kind in landmarks.items() if kind == _BODYMATTER),
+        None,
+    )
+    if target is None:
+        return 0
+
+    for index, spine_item in enumerate(package.spine):
+        item = package.item_by_id(spine_item.idref)
+        if item is not None and _path(item.href) == target:
+            return index
+
+    return 0
+
+
+def apply_overrides(
+    selection: Selection,
+    *,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+    pick: Sequence[str] = (),
+) -> Selection:
+    """Layer the CLI narration-set overrides onto a default selection.
+
+    `pick` replaces the set entirely with the named documents (in spine order),
+    ignoring `include`/`exclude`. Otherwise `include` resurrects documents the default
+    dropped for a soft reason and `exclude` removes documents, with `exclude` winning
+    ties. Selectors are case-sensitive globs matched against each document's
+    container-relative href and its basename; a selector matching no document is
+    reported in `unmatched`.
+
+    Args:
+        selection: The default selection from `select`.
+        include: Globs of documents to add back to the set.
+        exclude: Globs of documents to drop from the set.
+        pick: Globs naming the exact documents to narrate.
+
+    Returns:
+        The overridden selection, with unmatched selectors recorded.
+    """
+    entries = _ordered_entries(selection)
+    if pick:
+        return _apply_pick(entries, pick)
+
+    return _apply_include_exclude(entries, include, exclude)
+
+
+@dataclass(frozen=True, slots=True)
+class _Entry:
+    spine_index: int
+    item_id: str
+    href: str
+    reason: str | None
+
+
+def _ordered_entries(selection: Selection) -> list[_Entry]:
+    # Rebuild the per-spine-position view, keyed by spine index rather than href so a
+    # document that appears at two positions keeps its distinct default decisions.
+    entries = [
+        _Entry(doc.spine_index, doc.item_id, doc.href, None)
+        for doc in selection.documents
+    ]
+    entries += [
+        _Entry(ex.spine_index, ex.item_id, ex.href, ex.reason)
+        for ex in selection.excluded
+    ]
+    entries.sort(key=lambda entry: entry.spine_index)
+
+    return entries
+
+
+def _apply_pick(entries: list[_Entry], pick: Sequence[str]) -> Selection:
+    documents: list[Document] = []
+    excluded: list[Excluded] = []
+    for entry in entries:
+        if entry.href and _matches_any(entry.href, pick):
+            documents.append(Document(entry.item_id, entry.href, entry.spine_index))
+        else:
+            reason = "not-picked" if entry.href else (entry.reason or "excluded")
+            excluded.append(
+                Excluded(entry.item_id, entry.href, reason, entry.spine_index),
+            )
+
+    return Selection(tuple(documents), tuple(excluded), _unmatched(entries, pick))
+
+
+def _apply_include_exclude(
+    entries: list[_Entry],
+    include: Sequence[str],
+    exclude: Sequence[str],
+) -> Selection:
+    documents: list[Document] = []
+    excluded: list[Excluded] = []
+    for entry in entries:
+        if not entry.href:
+            excluded.append(
+                Excluded(
+                    entry.item_id,
+                    entry.href,
+                    entry.reason or "excluded",
+                    entry.spine_index,
+                ),
+            )
+            continue
+
+        included, reason = _override_decision(
+            entry.reason,
+            include_matched=_matches_any(entry.href, include),
+            exclude_matched=_matches_any(entry.href, exclude),
+        )
+        if included:
+            documents.append(Document(entry.item_id, entry.href, entry.spine_index))
+        else:
+            excluded.append(
+                Excluded(
+                    entry.item_id,
+                    entry.href,
+                    reason or "excluded",
+                    entry.spine_index,
+                ),
+            )
+
+    return Selection(
+        tuple(documents),
+        tuple(excluded),
+        _unmatched(entries, [*include, *exclude]),
+    )
+
+
+def _override_decision(
+    default_reason: str | None,
+    *,
+    include_matched: bool,
+    exclude_matched: bool,
+) -> tuple[bool, str | None]:
+    if default_reason is None:
+        if exclude_matched:
+            return False, "excluded"
+
+        return True, None
+
+    if include_matched and not exclude_matched and _is_soft(default_reason):
+        return True, None
+
+    return False, default_reason
+
+
+def _is_soft(reason: str) -> bool:
+    return reason in _SOFT_REASONS or reason.startswith("landmark:")
+
+
+def _matches_any(href: str, selectors: Sequence[str]) -> bool:
+    basename = posixpath.basename(href)
+    return any(
+        fnmatchcase(href, selector) or fnmatchcase(basename, selector)
+        for selector in selectors
+    )
+
+
+def _unmatched(entries: list[_Entry], selectors: Sequence[str]) -> tuple[str, ...]:
+    hrefs = [entry.href for entry in entries if entry.href]
+    seen: set[str] = set()
+    unmatched: list[str] = []
+    for selector in selectors:
+        if selector in seen:
+            continue
+
+        seen.add(selector)
+        if not any(_matches_any(href, [selector]) for href in hrefs):
+            unmatched.append(selector)
+
+    return tuple(unmatched)
+
+
+def read_landmarks(container_root: Path, package: Package) -> dict[str, str]:
+    """Read the landmarks nav into a container-relative href to `epub:type` map.
+
+    Args:
+        container_root: The container root directory.
+        package: The parsed package (used to locate the nav document).
+
+    Returns:
+        A mapping of document href (fragment stripped) to its first landmark
+        `epub:type`; empty when there is no nav or no landmarks section.
+    """
+    nav = package.nav_item()
+    if nav is None:
+        return {}
+
+    nav_path = container_root / nav.href
+    if not nav_path.is_file():
+        return {}
+
+    landmarks_nav = _landmarks_nav(_parse(nav_path))
+    if landmarks_nav is None:
+        return {}
+
+    nav_dir = posixpath.dirname(nav.href)
+    landmarks: dict[str, str] = {}
+    for anchor in landmarks_nav.iter(_qn(_XHTML_NS, "a")):
+        kind = anchor.get(_qn(_EPUB_NS, "type"))
+        href = anchor.get("href")
+        if not kind or not href:
+            continue
+
+        target = _resolve(nav_dir, href)
+        if target:
+            landmarks.setdefault(target, kind)
+
+    return landmarks
+
+
+def _landmarks_nav(root: XmlElement) -> XmlElement | None:
+    for nav in root.iter(_qn(_XHTML_NS, "nav")):
+        if nav.get(_qn(_EPUB_NS, "type")) == "landmarks":
+            return nav
+
+    return None
+
+
+def _parse(path: Path) -> XmlElement:
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+    return etree.fromstring(path.read_bytes(), parser)
+
+
+def _qn(namespace: str, tag: str) -> str:
+    return f"{{{namespace}}}{tag}"
+
+
+def _resolve(base_dir: str, href: str) -> str:
+    # Mirror opf._resolve's boundary check: a landmark href that is absolute or escapes
+    # the container is dropped (empty) rather than seeding a bogus, unmatchable key.
+    path = _path(href)
+    if not path or "\\" in path or posixpath.isabs(path):
+        return ""
+
+    resolved = posixpath.normpath(posixpath.join(base_dir, path))
+    if resolved == ".." or resolved.startswith("../"):
+        return ""
+
+    return resolved
+
+
+def _path(href: str) -> str:
+    return href.partition("#")[0]

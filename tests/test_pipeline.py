@@ -1,7 +1,25 @@
 from pathlib import Path
 
-from spantrack import cli, epub_container, pipeline
+import pytest
+
+from spantrack import cli, epub_container, narration_projection, narration_set, pipeline
 from spantrack.epubcheck import EpubcheckResult
+from spantrack.progress import ProgressReporter
+
+
+class _RecordingReporter(ProgressReporter):
+    def __init__(self) -> None:
+        self.selections: list[narration_set.Selection] = []
+        self.projections: list[narration_projection.SelectionProjection] = []
+
+    def info(self, message: str) -> None:
+        pass
+
+    def selection(self, selection: narration_set.Selection) -> None:
+        self.selections.append(selection)
+
+    def projection(self, projection: narration_projection.SelectionProjection) -> None:
+        self.projections.append(projection)
 
 
 def _read_tree(root: Path) -> dict[str, bytes]:
@@ -46,6 +64,64 @@ def test_dry_run_writes_no_output(minimal_epub_path: Path, tmp_path: Path):
 
     assert pipeline.run(config) == 0
     assert not config.output.exists()
+
+
+def test_dry_run_reports_selection_and_projection(
+    minimal_epub2_path: Path,
+    tmp_path: Path,
+):
+    reporter = _RecordingReporter()
+    config = _config(minimal_epub2_path, tmp_path, "--dry-run")
+
+    assert pipeline.run(config, reporter=reporter) == 0
+    assert not config.output.exists()
+
+    selection = reporter.selections[0]
+    assert [doc.href for doc in selection.documents] == ["OEBPS/chapter1.xhtml"]
+    assert reporter.projections[0].total_characters > 0
+
+
+def test_pick_override_limits_narration_set(
+    minimal_epub2_path: Path,
+    tmp_path: Path,
+):
+    reporter = _RecordingReporter()
+    config = _config(
+        minimal_epub2_path,
+        tmp_path,
+        "--dry-run",
+        "--pick",
+        "cover.xhtml",
+    )
+
+    pipeline.run(config, reporter=reporter)
+
+    assert [doc.href for doc in reporter.selections[0].documents] == [
+        "OEBPS/cover.xhtml"
+    ]
+
+
+def test_epub2_output_is_upgraded_to_epub3(minimal_epub2_path: Path, tmp_path: Path):
+    config = _config(minimal_epub2_path, tmp_path)
+    assert pipeline.run(config) == 0
+
+    result = tmp_path / "result"
+    epub_container.unzip(config.output, result)
+    assert 'version="3.0"' in (result / "OEBPS" / "content.opf").read_text()
+    assert (result / "OEBPS" / "nav.xhtml").is_file()
+
+
+def test_dry_run_prints_selection_to_stream(
+    minimal_epub2_path: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    config = _config(minimal_epub2_path, tmp_path, "--dry-run")
+    pipeline.run(config)
+
+    err = capsys.readouterr().err
+    assert "OEBPS/chapter1.xhtml" in err
+    assert "projected" in err
 
 
 def test_clean_rebuilds_work_dir(minimal_epub_path: Path, tmp_path: Path):

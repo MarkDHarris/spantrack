@@ -3,6 +3,9 @@
 import sys
 from typing import TextIO
 
+from spantrack.narration_projection import SelectionProjection
+from spantrack.narration_set import Selection
+
 
 class ProgressReporter:
     """Write plain progress lines to a text stream (stderr by default)."""
@@ -13,3 +16,49 @@ class ProgressReporter:
     def info(self, message: str) -> None:
         """Write one progress line."""
         print(message, file=self._stream)
+
+    def selection(self, selection: Selection) -> None:
+        """Print the narration set: chosen documents, skips with reasons, dud globs."""
+        self.info(f"narration set: {len(selection.documents)} document(s)")
+        for document in selection.documents:
+            self.info(f"  narrate  {document.href}")
+
+        for excluded in selection.excluded:
+            self.info(
+                f"  skip     {excluded.href or excluded.item_id} ({excluded.reason})"
+            )
+
+        for selector in selection.unmatched:
+            self.info(f"  warning  override matched no document: {selector}")
+
+    def projection(self, projection: SelectionProjection) -> None:
+        """Print the projected character total, audio duration, and output size."""
+        self.info(
+            f"projected: {projection.total_characters:,} characters, "
+            f"~{_format_duration(projection.duration_seconds)} audio, "
+            f"~{_format_size(projection.size_bytes)}",
+        )
+
+
+def _format_duration(seconds: float) -> str:
+    hours, remainder = divmod(round(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+
+    if minutes:
+        return f"{minutes}m {secs}s"
+
+    return f"{secs}s"
+
+
+def _format_size(size_bytes: int) -> str:
+    size = float(size_bytes)
+    for unit in ("B", "KB", "MB"):
+        if size < 1024:  # noqa: PLR2004
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+
+        size /= 1024
+
+    return f"{size:.1f} GB"

@@ -5,15 +5,39 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MINIMAL_EPUB_SRC = FIXTURES / "minimal_epub"
+MINIMAL_EPUB2_SRC = FIXTURES / "minimal_epub2"
 
 
 def _source_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.is_file())
 
 
+def _zip_epub(src_root: Path, epub_path: Path) -> Path:
+    """Zip a readable EPUB source tree into a valid .epub.
+
+    Built with raw zipfile (mimetype first, STORED) so container tests do not depend on
+    the production repack under test.
+    """
+    mimetype = src_root / "mimetype"
+    with zipfile.ZipFile(epub_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(mimetype, "mimetype", compress_type=zipfile.ZIP_STORED)
+        for path in _source_files(src_root):
+            if path == mimetype:
+                continue
+
+            zf.write(path, path.relative_to(src_root).as_posix())
+
+    return epub_path
+
+
 @pytest.fixture
 def minimal_epub_src() -> Path:
     return MINIMAL_EPUB_SRC
+
+
+@pytest.fixture
+def minimal_epub2_src() -> Path:
+    return MINIMAL_EPUB2_SRC
 
 
 @pytest.fixture
@@ -33,19 +57,9 @@ def real_epub_path() -> Path:
 
 @pytest.fixture
 def minimal_epub_path(tmp_path: Path, minimal_epub_src: Path) -> Path:
-    """Zip the readable minimal-EPUB source tree into a valid .epub.
+    return _zip_epub(minimal_epub_src, tmp_path / "minimal.epub")
 
-    Built with raw zipfile (mimetype first, STORED) so the unzip test does not depend on
-    the production repack under test in the next task.
-    """
-    epub_path = tmp_path / "minimal.epub"
-    mimetype = minimal_epub_src / "mimetype"
-    with zipfile.ZipFile(epub_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(mimetype, "mimetype", compress_type=zipfile.ZIP_STORED)
-        for path in _source_files(minimal_epub_src):
-            if path == mimetype:
-                continue
 
-            zf.write(path, path.relative_to(minimal_epub_src).as_posix())
-
-    return epub_path
+@pytest.fixture
+def minimal_epub2_path(tmp_path: Path, minimal_epub2_src: Path) -> Path:
+    return _zip_epub(minimal_epub2_src, tmp_path / "minimal2.epub")

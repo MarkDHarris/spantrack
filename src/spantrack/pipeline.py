@@ -2,9 +2,16 @@
 
 import shutil
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
-from spantrack import epub_container, epubcheck
+from spantrack import (
+    epub2_upgrade,
+    epub_container,
+    epubcheck,
+    narration_projection,
+    narration_set,
+)
 from spantrack.progress import ProgressReporter
 from spantrack.run_config import RunConfig
 
@@ -21,8 +28,9 @@ def run(
 ) -> int:
     """Convert one EPUB end to end and return the process exit code.
 
-    The pipeline unpacks the container and repacks it unchanged; narration stages are
-    inserted between those steps.
+    The pipeline unpacks the container, upgrades EPUB 2 inputs to EPUB 3, resolves the
+    narration set, and repacks. Narration stages (segmentation onward) slot in between
+    selection and repack; today the repack is still a passthrough of the upgraded copy.
 
     Args:
         config: The resolved run configuration.
@@ -34,10 +42,6 @@ def run(
     """
     reporter = reporter or ProgressReporter()
 
-    if config.dry_run:
-        reporter.info(f"[dry-run] would narrate {config.input} -> {config.output}")
-        return 0
-
     if config.clean and config.work_dir.exists():
         shutil.rmtree(config.work_dir)
 
@@ -46,6 +50,26 @@ def run(
         shutil.rmtree(book_dir)
 
     names = epub_container.unzip(config.input, book_dir)
+    package = epub2_upgrade.upgrade(book_dir, modified=_source_modified(config.input))
+
+    landmarks = narration_set.read_landmarks(book_dir, package)
+    selection = narration_set.apply_overrides(
+        narration_set.select(package, landmarks=landmarks),
+        include=config.include,
+        exclude=config.exclude,
+        pick=config.pick,
+    )
+    projection = narration_projection.project(
+        book_dir,
+        selection.documents,
+        bitrate=config.bitrate,
+        speed=config.speed,
+    )
+    reporter.selection(selection)
+    reporter.projection(projection)
+
+    if config.dry_run:
+        return 0
 
     epub_container.repack(book_dir, config.output, order=names)
     reporter.info(f"wrote {config.output}")
@@ -54,6 +78,15 @@ def run(
         return _report_validation(validator(config.output), reporter)
 
     return 0
+
+
+def _source_modified(path: Path) -> str:
+    # Derive dcterms:modified from the input's mtime so an EPUB 2 upgrade is
+    # reproducible across runs of the same file — never datetime.now(), which would
+    # break the determinism guarantee.
+    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+
+    return modified.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _report_validation(
