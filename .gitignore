@@ -1,3 +1,18 @@
 // Miscellaneous
 .claude
 .docs
+.epubs
+
+// Cache stuff
+.ruff_cache
+.pytest_cache
+__pycache__
+
+// IDE stuff
+.vscode
+
+// Python
+.venv
+*.egg-info
+build
+dist
