@@ -14,16 +14,14 @@ from pathlib import Path
 
 from lxml import etree
 
-from spantrack.lxml_reading import hardened_parser, qname
+from spantrack.lxml_reading import XHTML_NS, parse_xml_file, qname
 from spantrack.narration_set import Document
-from spantrack.opf import XmlElement
 
 __all__ = ["DocumentProjection", "SelectionProjection", "project"]
 
 # The main assumption we make is that ~1.8m characters result in about 30 hours of
 # narration (perf envelope) and we can calculate characters per audio second from that.
 _CHARS_PER_AUDIO_SECOND = 16.7
-_XHTML_NS = "http://www.w3.org/1999/xhtml"
 _WHITESPACE = re.compile(r"\s+")
 _BITRATE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([km]?)\s*$", re.IGNORECASE)
 _BITRATE_SUFFIXES = {"": 1, "k": 1_000, "m": 1_000_000}
@@ -77,7 +75,9 @@ def project(
         per_document.append(DocumentProjection(document.href, characters))
         total += characters
 
-    duration = total / (_CHARS_PER_AUDIO_SECOND * speed) if total else 0.0
+    # speed is CLI-validated > 0, so the denominator is never zero; an empty selection
+    # yields 0.0 on its own without a special case.
+    duration = total / (_CHARS_PER_AUDIO_SECOND * speed)
     size_bytes = round(duration * bitrate_bps / 8)
 
     return SelectionProjection(tuple(per_document), total, duration, size_bytes)
@@ -88,7 +88,7 @@ def _character_count(path: Path) -> int:
         return 0
 
     try:
-        root = _parse(path)
+        root = parse_xml_file(path)
     except etree.XMLSyntaxError:
         # A malformed document counts as zero here; the projection is a best-effort
         # preview, and segmentation is where a broken document hard-errors.
@@ -96,11 +96,12 @@ def _character_count(path: Path) -> int:
 
     etree.strip_elements(
         root,
-        qname(_XHTML_NS, "script"),
-        qname(_XHTML_NS, "style"),
+        qname(XHTML_NS, "script"),
+        qname(XHTML_NS, "style"),
         with_tail=False,
     )
-    body = root.find(qname(_XHTML_NS, "body"))
+
+    body = root.find(qname(XHTML_NS, "body"))
     if body is None:
         return 0
 
@@ -120,7 +121,3 @@ def _parse_bitrate(bitrate: str) -> int:
     value, suffix = match.groups()
 
     return int(float(value) * _BITRATE_SUFFIXES[suffix.lower()])
-
-
-def _parse(path: Path) -> XmlElement:
-    return etree.fromstring(path.read_bytes(), hardened_parser())

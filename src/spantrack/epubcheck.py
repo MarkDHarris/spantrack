@@ -29,7 +29,7 @@ class EpubcheckResult:
 
     ok: bool
     returncode: int
-    messages: list[str]
+    messages: tuple[str, ...]
 
 
 type CommandRunner = Callable[[Sequence[str]], CompletedCommand]
@@ -89,8 +89,11 @@ def _run_subprocess(command: Sequence[str]) -> CompletedCommand:
     )
 
 
-def _extract_messages(completed: CompletedCommand) -> list[str]:
+def _extract_messages(completed: CompletedCommand) -> tuple[str, ...]:
+    # epubcheck writes diagnostics to both stdout and stderr depending on version, so
+    # scan the two together. A line is a diagnostic when it opens with a severity token
+    # (str.startswith accepts the _MESSAGE_PREFIXES tuple); other output is dropped.
     lines = f"{completed.stdout}\n{completed.stderr}".splitlines()
-    return [
-        line.strip() for line in lines if line.strip().startswith(_MESSAGE_PREFIXES)
-    ]
+    stripped = (line.strip() for line in lines)
+
+    return tuple(line for line in stripped if line.startswith(_MESSAGE_PREFIXES))

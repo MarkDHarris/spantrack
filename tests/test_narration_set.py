@@ -24,7 +24,6 @@ def _package(
     return opf.Package(
         opf_path="OEBPS/content.opf",
         version="3.0",
-        unique_identifier=None,
         manifest=tuple(manifest),
         spine=tuple(spine),
         spine_toc=None,

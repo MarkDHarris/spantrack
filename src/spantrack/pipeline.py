@@ -16,6 +16,8 @@ from spantrack import (
 from spantrack.progress import ProgressReporter
 from spantrack.run_config import RunConfig
 
+__all__ = ["run"]
+
 type Validator = Callable[[Path], epubcheck.EpubcheckResult]
 
 BOOK_SUBDIR = "book"
@@ -29,9 +31,12 @@ def run(
 ) -> int:
     """Convert one EPUB end to end and return the process exit code.
 
-    The pipeline unpacks the container, upgrades EPUB 2 inputs to EPUB 3, resolves the
-    narration set, and repacks. Narration stages (segmentation onward) slot in between
-    selection and repack; today the repack is still a passthrough of the upgraded copy.
+    Unpacks the container, upgrades EPUB 2 inputs to EPUB 3, resolves the narration set,
+    refuses any non-XHTML content document, and projects the narration scale.
+
+    A `--dry-run` returns after reporting the projection; a full run then repacks the
+    book into the output EPUB (still a passthrough of the upgraded copy). Sentence-span
+    injection and synthesis slot in before the repack in a later phase.
 
     Args:
         config: The resolved run configuration.
@@ -46,6 +51,9 @@ def run(
     if config.clean and config.work_dir.exists():
         shutil.rmtree(config.work_dir)
 
+    # Rebuild book/ from scratch every run: unzip writes members without clearing the
+    # directory first, so a stale tree from an earlier (crashed or resumed) run would
+    # otherwise bleed into this one. --clean additionally discards sibling work state.
     book_dir = config.work_dir / BOOK_SUBDIR
     if book_dir.exists():
         shutil.rmtree(book_dir)

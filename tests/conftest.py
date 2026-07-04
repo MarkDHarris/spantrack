@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+type TreeReader = Callable[[Path], dict[str, bytes]]
+
 FIXTURES = Path(__file__).parent / "fixtures"
 MINIMAL_EPUB_SRC = FIXTURES / "minimal_epub"
 MINIMAL_EPUB2_SRC = FIXTURES / "minimal_epub2"
@@ -67,7 +69,7 @@ def minimal_epub2_path(tmp_path: Path, minimal_epub2_src: Path) -> Path:
 
 
 @pytest.fixture
-def read_file_tree() -> Callable[[Path], dict[str, bytes]]:
+def read_file_tree() -> TreeReader:
     """Return a helper that snapshots a directory as {posix-relative-path: bytes}."""
 
     def read(root: Path) -> dict[str, bytes]:
@@ -78,3 +80,9 @@ def read_file_tree() -> Callable[[Path], dict[str, bytes]]:
         }
 
     return read
+
+
+@pytest.fixture
+def zip_epub_tree() -> Callable[[Path, Path], Path]:
+    """Return a helper that zips an EPUB source tree into a valid .epub."""
+    return _zip_epub

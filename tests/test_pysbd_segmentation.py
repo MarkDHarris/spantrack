@@ -5,7 +5,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
-import syntok.segmenter as syntok  # pyright: ignore[reportMissingTypeStubs]
+from segmentation_oracle import syntok_sentence_count
 
 from spantrack.pysbd_segmentation import (
     _MAX_SEGMENTER_CHARS,  # pyright: ignore[reportPrivateUsage]  # boundary test needs it
@@ -43,11 +43,6 @@ CASES: list[tuple[str, tuple[str, ...]]] = [
 
 def _slices(text: str) -> list[str]:
     return [text[start:end] for start, end in split_sentences(text)]
-
-
-def _syntok_count(text: str) -> int:
-    paragraphs = syntok.process(text)  # pyright: ignore[reportUnknownMemberType]
-    return sum(1 for paragraph in paragraphs for _sentence in paragraph)
 
 
 def _covered(ranges: list[tuple[int, int]]) -> set[int]:
@@ -147,7 +142,9 @@ def test_agrees_with_syntok_oracle():
     # Independent cross-check: pysbd's sentence count matches syntok's on every curated
     # case, and both match the hand-authored split. An unexpected divergence fails here.
     for text, expected in CASES:
-        assert len(split_sentences(text)) == _syntok_count(text) == len(expected), text
+        assert (
+            len(split_sentences(text)) == syntok_sentence_count(text) == len(expected)
+        ), text
 
 
 def test_concat_failure_falls_back_to_single_unit_without_dropping_text():

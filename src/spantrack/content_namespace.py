@@ -24,13 +24,10 @@ from pathlib import Path
 
 from lxml import etree
 
-from spantrack.lxml_reading import hardened_parser
+from spantrack.lxml_reading import XHTML_NS, XmlElement, parse_xml_file
 from spantrack.narration_set import Document
-from spantrack.opf import XmlElement
 
 __all__ = ["ContentNamespaceError", "require_xhtml_namespace"]
-
-_XHTML_NS = "http://www.w3.org/1999/xhtml"
 
 
 class ContentNamespaceError(Exception):
@@ -60,11 +57,11 @@ def require_xhtml_namespace(
             # guard owns exactly one concern, so it leaves those alone.
             continue
 
-        qname = etree.QName(root)
-        if qname.namespace != _XHTML_NS:
-            found = qname.namespace or "none"
+        root_name = etree.QName(root)
+        if root_name.namespace != XHTML_NS:
+            found = root_name.namespace or "none"
             msg = (
-                f"{document.href}: root <{qname.localname}> is not in the XHTML "
+                f"{document.href}: root <{root_name.localname}> is not in the XHTML "
                 f"namespace (found: {found}); cannot narrate"
             )
             raise ContentNamespaceError(msg)
@@ -75,6 +72,6 @@ def _parse_root(path: Path) -> XmlElement | None:
         return None
 
     try:
-        return etree.fromstring(path.read_bytes(), hardened_parser())
+        return parse_xml_file(path)
     except etree.XMLSyntaxError:
         return None

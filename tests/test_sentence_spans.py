@@ -3,11 +3,10 @@ from copy import deepcopy
 from itertools import count, pairwise
 
 import pytest
-import syntok.segmenter as syntok  # pyright: ignore[reportMissingTypeStubs]  # no stubs
 from lxml import etree
+from segmentation_oracle import syntok_sentence_count
 
-from spantrack.lxml_reading import hardened_parser
-from spantrack.opf import XmlElement
+from spantrack.lxml_reading import XmlElement, hardened_parser
 from spantrack.sentence_spans import (
     BlockText,
     extract_block_text,
@@ -251,11 +250,12 @@ def test_extract_ignores_comment_body_keeps_tail():
     assert block_text.text == "xy"
 
 
-def test_locate_rejects_out_of_range_offset():
-    block_text = _extract("hi")
+@pytest.mark.parametrize("offset", [2, 7, -1])
+def test_locate_rejects_out_of_range_offset(offset: int):
+    block_text = _extract("hi")  # text "hi": only offsets 0 and 1 are in range
 
     with pytest.raises(IndexError):
-        block_text.locate(len(block_text.text))
+        block_text.locate(offset)
 
 
 def test_bare_namespace_document_is_not_narrated():
@@ -274,18 +274,7 @@ def test_bare_namespace_document_is_not_narrated():
     assert narratable_blocks(doc) == []
 
 
-@pytest.mark.parametrize(
-    "inner",
-    [
-        "a<em>b</em>c<a>d</a>e",
-        "café <em>x</em> y",  # multibyte: offsets are code points, not bytes
-        "x\U0001f600<em>y</em>z",  # astral char is one code point
-        "before <code>skip</code> after",  # only prose is a tail after a skipped child
-        "p<!-- c -->q",  # tail piece points at the comment node
-    ],
-)
-def test_pieces_tile_block_text_and_map_every_offset(inner: str):
-    block_text = _extract(inner)
+def _assert_pieces_tile_and_map(block_text: BlockText) -> None:
     pieces = block_text.pieces
 
     # Pieces tile [0, len(text)) contiguously — no gaps, no overlaps, none zero-length.
@@ -299,8 +288,24 @@ def test_pieces_tile_block_text_and_map_every_offset(inner: str):
     for offset in range(len(block_text.text)):
         piece, local = block_text.locate(offset)
         assert piece.string[local] == block_text.text[offset]
+        if piece.node.tag is etree.Entity and not piece.is_tail:
+            continue  # entity char piece: string is the resolved char, not node.text
         source = piece.node.tail if piece.is_tail else piece.node.text
         assert source == piece.string
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        "a<em>b</em>c<a>d</a>e",
+        "café <em>x</em> y",  # multibyte: offsets are code points, not bytes
+        "x\U0001f600<em>y</em>z",  # astral char is one code point
+        "before <code>skip</code> after",  # only prose is a tail after a skipped child
+        "p<!-- c -->q",  # tail piece points at the comment node
+    ],
+)
+def test_pieces_tile_block_text_and_map_every_offset(inner: str):
+    _assert_pieces_tile_and_map(_extract(inner))
 
 
 def test_extract_omits_empty_string_nodes():
@@ -402,22 +407,9 @@ def test_nested_or_custom_entity_is_dropped_not_leaked():
 
 
 def test_entity_block_tiles_and_maps_every_offset():
-    block_text = _extract_with_dtd(_RSQUO_DTD, "a&rsquo;<em>b</em>c")
-    pieces = block_text.pieces
-
-    assert pieces[0].offset == 0
-    for prev, nxt in pairwise(pieces):
-        assert nxt.offset == prev.offset + len(prev.string)
-    assert pieces[-1].offset + len(pieces[-1].string) == len(block_text.text)
-    assert all(piece.string for piece in pieces)
-
-    for offset in range(len(block_text.text)):
-        piece, local = block_text.locate(offset)
-        assert piece.string[local] == block_text.text[offset]
-        if piece.node.tag is etree.Entity and not piece.is_tail:
-            continue  # entity char piece: string is the resolved char, not node.text
-        source = piece.node.tail if piece.is_tail else piece.node.text
-        assert source == piece.string
+    # Same tiling + offset-map invariant as the plain case, but with an atomic entity
+    # char piece in the mix (the shared helper retains the entity-skip conditional).
+    _assert_pieces_tile_and_map(_extract_with_dtd(_RSQUO_DTD, "a&rsquo;<em>b</em>c"))
 
 
 def test_entity_with_no_tail_is_a_single_non_tail_char_piece():
@@ -696,11 +688,6 @@ _FICTION = [
 ]
 
 
-def _syntok_count(text: str) -> int:
-    paragraphs = syntok.process(text)  # pyright: ignore[reportUnknownMemberType]
-    return sum(1 for paragraph in paragraphs for _sentence in paragraph)
-
-
 def test_inject_assigns_sequential_document_scoped_ids():
     root = _parse("<h1>Title here.</h1><p>First. Second.</p>")
 
@@ -758,7 +745,7 @@ def test_inject_over_a_fiction_document_matches_expected_and_syntok():
     expected = [sentence for _, sentences in _FICTION for sentence in sentences]
     assert list(emitted.values()) == expected
     # Coarse independent oracle: on plain prose (no inline merges) syntok agrees.
-    assert len(emitted) == sum(_syntok_count(text) for text, _ in _FICTION)
+    assert len(emitted) == sum(syntok_sentence_count(text) for text, _ in _FICTION)
 
 
 def test_inject_ids_never_collide_with_source_ids():

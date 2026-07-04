@@ -4,6 +4,7 @@ import pytest
 from lxml import etree
 
 from spantrack import epub2_upgrade, epub_container, opf
+from spantrack.lxml_reading import XmlElement
 
 _MODIFIED = "2026-07-03T00:00:00Z"
 
@@ -101,14 +102,14 @@ def _unzip(epub_path: Path, tmp_path: Path) -> Path:
     return book
 
 
-def _nav_root(book: Path, package: opf.Package) -> opf.XmlElement:
+def _nav_root(book: Path, package: opf.Package) -> XmlElement:
     nav = package.nav_item()
     assert nav is not None
 
     return etree.parse(str(book / nav.href)).getroot()
 
 
-def _links(nav_root: opf.XmlElement, nav_type: str) -> dict[str, str]:
+def _nav_href_to_label(nav_root: XmlElement, nav_type: str) -> dict[str, str]:
     navs = [
         el
         for el in nav_root.iter(f"{{{_XHTML}}}nav")
@@ -122,7 +123,7 @@ def _links(nav_root: opf.XmlElement, nav_type: str) -> dict[str, str]:
     }
 
 
-def _landmark_hrefs(nav_root: opf.XmlElement) -> dict[str, str]:
+def _landmark_type_to_href(nav_root: XmlElement) -> dict[str, str]:
     navs = [
         el
         for el in nav_root.iter(f"{{{_XHTML}}}nav")
@@ -173,7 +174,7 @@ def test_upgrade_toc_lists_ncx_entries(minimal_epub2_path: Path, tmp_path: Path)
 
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
-    toc = _links(_nav_root(book, package), "toc")
+    toc = _nav_href_to_label(_nav_root(book, package), "toc")
     assert toc == {"chapter1.xhtml": "Chapter 1"}
 
 
@@ -182,7 +183,7 @@ def test_upgrade_landmarks_from_guide(minimal_epub2_path: Path, tmp_path: Path):
 
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
-    landmarks = _landmark_hrefs(_nav_root(book, package))
+    landmarks = _landmark_type_to_href(_nav_root(book, package))
     assert landmarks["cover"] == "cover.xhtml"
     assert landmarks["bodymatter"] == "chapter1.xhtml"
 
@@ -275,7 +276,7 @@ def test_toc_keeps_children_of_targetless_navpoint(tmp_path: Path):
 
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
-    toc = _links(_nav_root(book, package), "toc")
+    toc = _nav_href_to_label(_nav_root(book, package), "toc")
     assert toc["c1.xhtml"] == "One"
     assert toc["c2.xhtml"] == "Two"
 
@@ -294,7 +295,7 @@ def test_toc_falls_back_to_spine_when_navmap_empty(tmp_path: Path):
 
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
-    toc = _links(_nav_root(book, package), "toc")
+    toc = _nav_href_to_label(_nav_root(book, package), "toc")
     assert toc == {"c1.xhtml": "First Chapter"}
 
 
@@ -315,7 +316,7 @@ def test_landmarks_normalize_acknowledgements_spelling(tmp_path: Path):
 
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
-    assert "acknowledgments" in _landmark_hrefs(_nav_root(book, package))
+    assert "acknowledgments" in _landmark_type_to_href(_nav_root(book, package))
 
 
 def test_landmarks_omit_unknown_guide_types(tmp_path: Path):
@@ -340,7 +341,7 @@ def test_landmarks_omit_unknown_guide_types(tmp_path: Path):
 
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
-    landmarks = _landmark_hrefs(_nav_root(book, package))
+    landmarks = _landmark_type_to_href(_nav_root(book, package))
     assert "bodymatter" in landmarks
     assert "not-a-real-type" not in landmarks
 

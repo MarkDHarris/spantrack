@@ -8,23 +8,27 @@ version, stamps `dcterms:modified`, and leaves the NCX in place for reader fallb
 
 import posixpath
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from lxml import etree
 
 from spantrack import opf
-from spantrack.lxml_reading import hardened_parser, qname
-from spantrack.opf import Package, XmlElement
+from spantrack.lxml_reading import (
+    EPUB_NS,
+    OPF_NS,
+    XHTML_NS,
+    XmlElement,
+    hardened_parser,
+    parse_xml_file,
+    qname,
+)
+from spantrack.opf import XHTML_MEDIA_TYPE, Package
 
 __all__ = ["upgrade"]
 
-_OPF_NS = "http://www.idpf.org/2007/opf"
-_XHTML_NS = "http://www.w3.org/1999/xhtml"
-_EPUB_NS = "http://www.idpf.org/2007/ops"
 _NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
-_XHTML_MEDIA_TYPE = "application/xhtml+xml"
 
 # Translate OPF 2.0 <guide> reference types to EPUB 3 structural-semantics epub:type
 # landmark values. Guide types absent from this map are omitted from the landmarks nav
@@ -62,7 +66,7 @@ class _NavEntry:
 
     label: str
     href: str | None
-    children: tuple["_NavEntry", ...] = field(default_factory=tuple)
+    children: tuple["_NavEntry", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +119,9 @@ def _toc_entries(
     ncx = package.ncx_item()
     entries: tuple[_NavEntry, ...] = ()
     if ncx is not None:
-        nav_map = _parse(container_root / ncx.href).find(qname(_NCX_NS, "navMap"))
+        nav_map = parse_xml_file(container_root / ncx.href).find(
+            qname(_NCX_NS, "navMap"),
+        )
         if nav_map is not None:
             entries = tuple(_nav_points(nav_map, posixpath.dirname(ncx.href), base_dir))
 
@@ -201,25 +207,25 @@ def _render_nav(
 ) -> bytes:
     # lxml uses a None key for the default namespace; lxml-stubs types nsmap as
     # Mapping[str, str] and rejects it, so cast past the stub gap.
-    nsmap = cast("dict[str, str]", {None: _XHTML_NS, "epub": _EPUB_NS})
+    nsmap = cast("dict[str, str]", {None: XHTML_NS, "epub": EPUB_NS})
 
-    html = etree.Element(qname(_XHTML_NS, "html"), nsmap=nsmap)
-    head = etree.SubElement(html, qname(_XHTML_NS, "head"))
-    etree.SubElement(head, qname(_XHTML_NS, "title")).text = "Contents"
-    body = etree.SubElement(html, qname(_XHTML_NS, "body"))
+    html = etree.Element(qname(XHTML_NS, "html"), nsmap=nsmap)
+    head = etree.SubElement(html, qname(XHTML_NS, "head"))
+    etree.SubElement(head, qname(XHTML_NS, "title")).text = "Contents"
+    body = etree.SubElement(html, qname(XHTML_NS, "body"))
 
     _append_list(_nav_section(body, "toc"), toc)
 
     if landmarks:
         landmarks_list = etree.SubElement(
             _nav_section(body, "landmarks"),
-            qname(_XHTML_NS, "ol"),
+            qname(XHTML_NS, "ol"),
         )
         for landmark in landmarks:
-            item = etree.SubElement(landmarks_list, qname(_XHTML_NS, "li"))
-            anchor = etree.SubElement(item, qname(_XHTML_NS, "a"))
+            item = etree.SubElement(landmarks_list, qname(XHTML_NS, "li"))
+            anchor = etree.SubElement(item, qname(XHTML_NS, "a"))
             anchor.set("href", landmark.href)
-            anchor.set(qname(_EPUB_NS, "type"), landmark.epub_type)
+            anchor.set(qname(EPUB_NS, "type"), landmark.epub_type)
             anchor.text = landmark.label
 
     body_xml = etree.tostring(html, encoding="utf-8", pretty_print=True)
@@ -229,22 +235,22 @@ def _render_nav(
 
 def _nav_section(body: XmlElement, epub_type: str) -> XmlElement:
     # Each EPUB 3 nav carries its epub:type as both the type and the element id.
-    nav = etree.SubElement(body, qname(_XHTML_NS, "nav"))
-    nav.set(qname(_EPUB_NS, "type"), epub_type)
+    nav = etree.SubElement(body, qname(XHTML_NS, "nav"))
+    nav.set(qname(EPUB_NS, "type"), epub_type)
     nav.set("id", epub_type)
 
     return nav
 
 
 def _append_list(parent: XmlElement, entries: tuple[_NavEntry, ...]) -> None:
-    ordered = etree.SubElement(parent, qname(_XHTML_NS, "ol"))
+    ordered = etree.SubElement(parent, qname(XHTML_NS, "ol"))
     for entry in entries:
-        item = etree.SubElement(ordered, qname(_XHTML_NS, "li"))
+        item = etree.SubElement(ordered, qname(XHTML_NS, "li"))
 
         # A navPoint without a target (a structural heading) becomes a <span> label; the
         # EPUB 3 nav grammar allows it and it keeps the child hierarchy intact.
         label_tag = "a" if entry.href is not None else "span"
-        label = etree.SubElement(item, qname(_XHTML_NS, label_tag))
+        label = etree.SubElement(item, qname(XHTML_NS, label_tag))
         label.text = entry.label
 
         if entry.href is not None:
@@ -263,24 +269,24 @@ def _patch_opf(path: Path, *, nav_id: str, nav_href: str, modified: str) -> None
     # EPUB 3 mandates a dcterms:modified meta and a nav manifest item; without these
     # host elements the OPF cannot be upgraded, so fail loudly instead of emitting
     # invalid output.
-    metadata = root.find(qname(_OPF_NS, "metadata"))
+    metadata = root.find(qname(OPF_NS, "metadata"))
     if metadata is None:
         err_msg = "OPF has no <metadata> element to stamp dcterms:modified"
         raise opf.OpfError(err_msg)
 
-    manifest = root.find(qname(_OPF_NS, "manifest"))
+    manifest = root.find(qname(OPF_NS, "manifest"))
     if manifest is None:
         err_msg = "OPF has no <manifest> element to register the nav document"
         raise opf.OpfError(err_msg)
 
-    meta = etree.SubElement(metadata, qname(_OPF_NS, "meta"))
+    meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
     meta.set("property", "dcterms:modified")
     meta.text = modified
 
-    item = etree.SubElement(manifest, qname(_OPF_NS, "item"))
+    item = etree.SubElement(manifest, qname(OPF_NS, "item"))
     item.set("id", nav_id)
     item.set("href", nav_href)
-    item.set("media-type", _XHTML_MEDIA_TYPE)
+    item.set("media-type", XHTML_MEDIA_TYPE)
     item.set("properties", "nav")
 
     tree.write(str(path), xml_declaration=True, encoding="utf-8")
@@ -290,7 +296,9 @@ def _document_title(path: Path) -> str:
     if not path.is_file():
         return ""
 
-    title = _parse(path).find(f"{qname(_XHTML_NS, 'head')}/{qname(_XHTML_NS, 'title')}")
+    title = parse_xml_file(path).find(
+        f"{qname(XHTML_NS, 'head')}/{qname(XHTML_NS, 'title')}",
+    )
 
     return (title.text or "").strip() if title is not None else ""
 
@@ -317,10 +325,6 @@ def _unused(base: str, taken: Callable[[str], bool]) -> str:
         counter += 1
 
     return f"{base}-{counter}"
-
-
-def _parse(path: Path) -> XmlElement:
-    return etree.fromstring(path.read_bytes(), hardened_parser())
 
 
 def _resolve_ncx_src(ncx_dir: str, src: str) -> str:

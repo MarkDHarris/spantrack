@@ -1,14 +1,15 @@
 import shutil
-import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import TreeReader
 
 from spantrack import cli, epub_container, narration_projection, narration_set, pipeline
 from spantrack.content_namespace import ContentNamespaceError
 from spantrack.epubcheck import EpubcheckResult
 from spantrack.progress import ProgressReporter
+from spantrack.run_config import RunConfig
 
 
 class _RecordingReporter(ProgressReporter):
@@ -26,7 +27,7 @@ class _RecordingReporter(ProgressReporter):
         self.projections.append(projection)
 
 
-def _config(epub: Path, tmp_path: Path, *extra: str):
+def _config(epub: Path, tmp_path: Path, *extra: str) -> RunConfig:
     return cli.parse_args(
         [
             str(epub),
@@ -42,7 +43,7 @@ def _config(epub: Path, tmp_path: Path, *extra: str):
 def test_run_produces_round_trippable_output(
     minimal_epub_path: Path,
     tmp_path: Path,
-    read_file_tree: Callable[[Path], dict[str, bytes]],
+    read_file_tree: TreeReader,
 ):
     config = _config(minimal_epub_path, tmp_path)
     code = pipeline.run(config)
@@ -142,7 +143,7 @@ def test_validate_pass_returns_zero(minimal_epub_path: Path, tmp_path: Path):
     config = _config(minimal_epub_path, tmp_path, "--validate")
     code = pipeline.run(
         config,
-        validator=lambda _: EpubcheckResult(ok=True, returncode=0, messages=[]),
+        validator=lambda _: EpubcheckResult(ok=True, returncode=0, messages=()),
     )
 
     assert code == 0
@@ -155,7 +156,7 @@ def test_validate_failure_returns_nonzero(minimal_epub_path: Path, tmp_path: Pat
         validator=lambda _: EpubcheckResult(
             ok=False,
             returncode=1,
-            messages=["ERROR(RSC-005): broken"],
+            messages=("ERROR(RSC-005): broken",),
         ),
     )
 
@@ -167,7 +168,7 @@ def test_validate_invoked_with_output_path(minimal_epub_path: Path, tmp_path: Pa
 
     def validator(path: Path) -> EpubcheckResult:
         seen["path"] = path
-        return EpubcheckResult(ok=True, returncode=0, messages=[])
+        return EpubcheckResult(ok=True, returncode=0, messages=())
 
     config = _config(minimal_epub_path, tmp_path, "--validate")
     pipeline.run(config, validator=validator)
@@ -184,20 +185,10 @@ def test_no_validation_by_default(minimal_epub_path: Path, tmp_path: Path):
     assert pipeline.run(config, validator=validator) == 0
 
 
-def _zip_dir(src_root: Path, epub_path: Path) -> Path:
-    mimetype = src_root / "mimetype"
-    with zipfile.ZipFile(epub_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(mimetype, "mimetype", compress_type=zipfile.ZIP_STORED)
-        for path in sorted(src_root.rglob("*")):
-            if path.is_file() and path != mimetype:
-                zf.write(path, path.relative_to(src_root).as_posix())
-
-    return epub_path
-
-
 def test_non_xhtml_content_document_fails_loud(
     minimal_epub2_src: Path,
     tmp_path: Path,
+    zip_epub_tree: Callable[[Path, Path], Path],
 ):
     # A chapter whose <html> omits the XHTML namespace would be silently narrated as
     # empty by every downstream stage; the ingest guard refuses the build instead. The
@@ -210,7 +201,7 @@ def test_non_xhtml_content_document_fails_loud(
         "<body><h1>One</h1><p>Bare namespace.</p></body></html>",
         encoding="utf-8",
     )
-    epub = _zip_dir(src, tmp_path / "bad.epub")
+    epub = zip_epub_tree(src, tmp_path / "bad.epub")
     config = _config(epub, tmp_path, "--dry-run")
 
     with pytest.raises(ContentNamespaceError, match=r"chapter1\.xhtml"):

@@ -53,12 +53,17 @@ def _format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
+_BYTES_PER_UNIT = 1024
+
+
 def _format_size(size_bytes: int) -> str:
     size = float(size_bytes)
-    for unit in ("B", "KB", "MB"):
-        if size < 1024:  # noqa: PLR2004
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+    if size < _BYTES_PER_UNIT:
+        return f"{size:.0f} B"
 
-        size /= 1024
+    for unit in ("KB", "MB"):
+        size /= _BYTES_PER_UNIT
+        if size < _BYTES_PER_UNIT:
+            return f"{size:.1f} {unit}"
 
-    return f"{size:.1f} GB"
+    return f"{size / _BYTES_PER_UNIT:.1f} GB"

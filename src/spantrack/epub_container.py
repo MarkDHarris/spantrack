@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 MIMETYPE_NAME = "mimetype"
-MIMETYPE_CONTENT = b"application/epub+zip"
 
 
 def unzip(epub_path: Path, dest_dir: Path) -> list[str]:
@@ -24,8 +23,6 @@ def unzip(epub_path: Path, dest_dir: Path) -> list[str]:
     Raises:
         ValueError: If a member path escapes dest_dir (zip-slip).
     """
-    dest_dir = Path(dest_dir)
-
     names: list[str] = []
     with zipfile.ZipFile(epub_path) as archive:
         for info in archive.infolist():
@@ -64,8 +61,6 @@ def repack(
     Raises:
         ValueError: If source_dir has no `mimetype` file.
     """
-    source_dir = Path(source_dir)
-
     mimetype = source_dir / MIMETYPE_NAME
     if not mimetype.is_file():
         err_msg = f"missing {MIMETYPE_NAME} in {source_dir}"

@@ -106,6 +106,7 @@ convention = "google" # enforce Google-style docstring sections
 
 [tool.pyright]
 include          = ["src", "tests"]
+extraPaths       = ["tests"]        # resolve shared test-helper modules (conftest, oracle)
 pythonVersion    = "3.12"
 typeCheckingMode = "strict"
 venvPath         = "."              # resolve third-party imports against the project venv

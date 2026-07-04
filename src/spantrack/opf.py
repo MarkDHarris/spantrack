@@ -12,13 +12,10 @@ from pathlib import Path
 
 from lxml import etree
 
-from spantrack.lxml_reading import hardened_parser, qname
-
-# lxml names its element type with a leading underscore by convention; alias it once so
-# annotations reference a public name instead of tripping reportPrivateUsage repeatedly.
-type XmlElement = etree._Element  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+from spantrack.lxml_reading import OPF_NS, XmlElement, parse_xml_file, qname
 
 __all__ = [
+    "XHTML_MEDIA_TYPE",
     "GuideReference",
     "ManifestItem",
     "OpfError",
@@ -29,8 +26,12 @@ __all__ = [
 
 _CONTAINER_PATH = "META-INF/container.xml"
 _CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
-_OPF_NS = "http://www.idpf.org/2007/opf"
 _OPF_MEDIA_TYPE = "application/oebps-package+xml"
+
+# The EPUB 3 content-document media type. Shared with narration-set (which gates
+# narration on this exact string) and the EPUB 2 upgrade (which stamps it onto the
+# generated nav item), so one source keeps the selector and the emitter from drifting.
+XHTML_MEDIA_TYPE = "application/xhtml+xml"
 
 
 class OpfError(Exception):
@@ -90,7 +91,6 @@ class Package:
     Attributes:
         opf_path: Container-relative path to the OPF (POSIX).
         version: The `package/@version` string (e.g. `3.0`, `2.0`).
-        unique_identifier: The `unique-identifier` id attribute, when present.
         manifest: Manifest items in document order.
         spine: Spine items in reading order.
         spine_toc: The `spine/@toc` idref (the NCX), when present.
@@ -99,7 +99,6 @@ class Package:
 
     opf_path: str
     version: str
-    unique_identifier: str | None
     manifest: tuple[ManifestItem, ...]
     spine: tuple[SpineItem, ...]
     spine_toc: str | None
@@ -145,12 +144,11 @@ def read_package(container_root: Path) -> Package:
     root = _parse_xml(container_root / opf_path)
     base_dir = posixpath.dirname(opf_path)
 
-    spine, spine_toc = _read_spine(root.find(qname(_OPF_NS, "spine")))
+    spine, spine_toc = _read_spine(root.find(qname(OPF_NS, "spine")))
 
     return Package(
         opf_path=opf_path,
         version=root.get("version", ""),
-        unique_identifier=root.get("unique-identifier"),
         manifest=tuple(_read_manifest(root, base_dir)),
         spine=spine,
         spine_toc=spine_toc,
@@ -193,11 +191,11 @@ def _select_opf_rootfile(rootfiles: Iterator[XmlElement]) -> str | None:
 
 
 def _read_manifest(root: XmlElement, base_dir: str) -> Iterator[ManifestItem]:
-    manifest = root.find(qname(_OPF_NS, "manifest"))
+    manifest = root.find(qname(OPF_NS, "manifest"))
     if manifest is None:
         return
 
-    for item in manifest.iterfind(qname(_OPF_NS, "item")):
+    for item in manifest.iterfind(qname(OPF_NS, "item")):
         item_id = item.get("id")
         href = item.get("href")
         if not item_id or not href:
@@ -205,7 +203,7 @@ def _read_manifest(root: XmlElement, base_dir: str) -> Iterator[ManifestItem]:
 
         yield ManifestItem(
             item_id=item_id,
-            href=_resolve(base_dir, href),
+            href=_require_within_container(base_dir, href),
             media_type=item.get("media-type", ""),
             properties=frozenset(item.get("properties", "").split()),
         )
@@ -219,7 +217,7 @@ def _read_spine(
 
     items = [
         SpineItem(idref=idref, linear=itemref.get("linear", "yes") != "no")
-        for itemref in spine.iterfind(qname(_OPF_NS, "itemref"))
+        for itemref in spine.iterfind(qname(OPF_NS, "itemref"))
         if (idref := itemref.get("idref"))
     ]
 
@@ -227,11 +225,11 @@ def _read_spine(
 
 
 def _read_guide(root: XmlElement, base_dir: str) -> Iterator[GuideReference]:
-    guide = root.find(qname(_OPF_NS, "guide"))
+    guide = root.find(qname(OPF_NS, "guide"))
     if guide is None:
         return
 
-    for ref in guide.iterfind(qname(_OPF_NS, "reference")):
+    for ref in guide.iterfind(qname(OPF_NS, "reference")):
         kind = ref.get("type")
         href = ref.get("href")
         if not kind or not href:
@@ -239,14 +237,14 @@ def _read_guide(root: XmlElement, base_dir: str) -> Iterator[GuideReference]:
 
         yield GuideReference(
             kind=kind,
-            href=_resolve(base_dir, href),
+            href=_require_within_container(base_dir, href),
             title=ref.get("title"),
         )
 
 
 def _parse_xml(path: Path) -> XmlElement:
     try:
-        return etree.fromstring(path.read_bytes(), hardened_parser())
+        return parse_xml_file(path)
     except etree.XMLSyntaxError as exc:
         err_msg = f"malformed XML in {path.name}"
         raise OpfError(err_msg) from exc
@@ -271,7 +269,12 @@ def resolve_within_container(base_dir: str, href: str) -> str | None:
     return resolved
 
 
-def _resolve(base_dir: str, href: str) -> str:
+def _require_within_container(base_dir: str, href: str) -> str:
+    """Resolve an OPF-relative href within the container, or raise on escape.
+
+    Unlike `resolve_within_container`, this fails loud with `OpfError` rather than
+    returning None, and preserves the href fragment.
+    """
     resolved = resolve_within_container(base_dir, href)
     if resolved is None:
         err_msg = f"href outside the container: {href!r}"

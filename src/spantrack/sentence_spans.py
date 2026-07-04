@@ -19,8 +19,7 @@ from itertools import count, pairwise
 
 from lxml import etree
 
-from spantrack.lxml_reading import qname
-from spantrack.opf import XmlElement
+from spantrack.lxml_reading import XHTML_NS, XmlElement, qname
 from spantrack.pysbd_segmentation import split_sentences
 
 __all__ = [
@@ -32,10 +31,9 @@ __all__ = [
     "narratable_blocks",
 ]
 
-_XHTML_NS = "http://www.w3.org/1999/xhtml"
 _WHITESPACE = re.compile(r"\s+")
 _BLOCK_TAGS = frozenset(
-    qname(_XHTML_NS, tag)
+    qname(XHTML_NS, tag)
     for tag in (
         "p",
         "h1",
@@ -52,7 +50,7 @@ _BLOCK_TAGS = frozenset(
     )
 )
 _SKIP_CONTAINERS = frozenset(
-    qname(_XHTML_NS, tag) for tag in ("table", "pre", "code", "script", "style", "nav")
+    qname(XHTML_NS, tag) for tag in ("table", "pre", "code", "script", "style", "nav")
 )
 
 
@@ -189,6 +187,11 @@ class _TextRun:
 
     text: str
     start: int
+
+    @property
+    def end(self) -> int:
+        """Exclusive end offset of this run in the block's raw text."""
+        return self.start + len(self.text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,12 +335,7 @@ def _merge_units(
 
 def _segment_at(offset: int, segments: list[_Segment]) -> _Segment | None:
     for segment in segments:
-        end = (
-            segment.start + len(segment.text)
-            if isinstance(segment, _TextRun)
-            else segment.end
-        )
-        if segment.start <= offset < end:
+        if segment.start <= offset < segment.end:
             return segment
 
     return None
@@ -362,7 +360,7 @@ def _rebuild(
 
     def span_for(index: int) -> _Emitter:
         if index not in span_emitters:
-            span = block.makeelement(qname(_XHTML_NS, "span"), {"id": span_ids[index]})
+            span = block.makeelement(qname(XHTML_NS, "span"), {"id": span_ids[index]})
             block_emitter.element(span)
             span_emitters[index] = _Emitter(span)
 
@@ -387,7 +385,7 @@ def _classify_text(
     units: list[tuple[int, int]],
 ) -> Iterator[tuple[int, int, int | None]]:
     start = segment.start
-    end = start + len(segment.text)
+    end = segment.end
 
     cuts = sorted({start, end} | {b for unit in units for b in unit if start < b < end})
     for run_start, run_end in pairwise(cuts):

@@ -6,7 +6,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from spantrack import pipeline
-from spantrack.run_config import LANG_CODES, RunConfig
+from spantrack.run_config import (
+    AudioFormat,
+    Device,
+    Granularity,
+    Language,
+    RunConfig,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,20 +39,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--lang",
-        choices=tuple(LANG_CODES),
-        default="en-us",
+        choices=tuple(Language),
+        type=Language,
+        default=Language.EN_US,
         help="Narration language",
     )
     parser.add_argument(
         "--granularity",
-        choices=("sentence", "word"),
-        default="sentence",
+        choices=tuple(Granularity),
+        type=Granularity,
+        default=Granularity.SENTENCE,
         help="Highlight granularity (word is experimental)",
     )
     parser.add_argument(
         "--audio-format",
-        choices=("mp3", "opus"),
-        default="mp3",
+        choices=tuple(AudioFormat),
+        type=AudioFormat,
+        default=AudioFormat.MP3,
         dest="audio_format",
         help="Chapter audio codec",
     )
@@ -92,8 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--device",
-        choices=("auto", "cuda", "cpu"),
-        default="auto",
+        choices=tuple(Device),
+        type=Device,
+        default=Device.AUTO,
         help="Synthesis device",
     )
     parser.add_argument(
@@ -136,7 +146,7 @@ def parse_args(argv: Sequence[str] | None = None) -> RunConfig:
         SystemExit: On invalid arguments (argparse exits with code 2).
     """
     args = build_parser().parse_args(argv)
-    if args.granularity == "word":
+    if args.granularity is Granularity.WORD:
         warnings.warn(
             "word granularity is experimental; A/B a single chapter in Thorium "
             "before committing to a full-book run",

@@ -13,14 +13,12 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-from lxml import etree
-
-from spantrack.lxml_reading import hardened_parser, qname
+from spantrack.lxml_reading import EPUB_NS, XHTML_NS, XmlElement, parse_xml_file, qname
 from spantrack.opf import (
+    XHTML_MEDIA_TYPE,
     ManifestItem,
     Package,
     SpineItem,
-    XmlElement,
     resolve_within_container,
 )
 
@@ -33,17 +31,14 @@ __all__ = [
     "select",
 ]
 
-_XHTML_NS = "http://www.w3.org/1999/xhtml"
-_EPUB_NS = "http://www.idpf.org/2007/ops"
-_XHTML_MEDIA_TYPE = "application/xhtml+xml"
-
 # epub:type landmark values whose target document is navigational or non-prose and must
 # never be narrated.
 _SKIP_LANDMARKS = frozenset({"cover", "toc", "loi", "lot", "landmarks"})
 _BODYMATTER = "bodymatter"
 
-# Default exclusion reasons that `--include` may override; structural reasons (nav,
-# non-content, unresolved-item) are never resurrected — those documents carry no prose.
+# Default exclusion reasons that `--include` may override. `landmark:*` reasons are soft
+# too (resurrected by `_is_soft`); structural reasons (nav, non-content,
+# unresolved-item) never are — those documents carry no prose.
 _SOFT_REASONS = frozenset({"non-linear", "front-matter"})
 
 
@@ -131,7 +126,7 @@ def _exclusion_reason(
     if not spine_item.linear:
         return "non-linear"
 
-    if item.media_type != _XHTML_MEDIA_TYPE:
+    if item.media_type != XHTML_MEDIA_TYPE:
         return "non-content"
 
     if landmark in _SKIP_LANDMARKS:
@@ -156,6 +151,9 @@ def _body_start_index(package: Package, landmarks: Mapping[str, str]) -> int:
         if item is not None and _strip_fragment(item.href) == target:
             return index
 
+    # The bodymatter landmark points outside the spine (a dangling marker): fall back to
+    # index 0 so nothing is treated as front matter. Widening narration is safer than
+    # letting a bad marker classify the whole book as skippable front matter.
     return 0
 
 
@@ -337,14 +335,14 @@ def read_landmarks(container_root: Path, package: Package) -> dict[str, str]:
     if not nav_path.is_file():
         return {}
 
-    landmarks_nav = _landmarks_nav(_parse(nav_path))
+    landmarks_nav = _landmarks_nav(parse_xml_file(nav_path))
     if landmarks_nav is None:
         return {}
 
     nav_dir = posixpath.dirname(nav.href)
     landmarks: dict[str, str] = {}
-    for anchor in landmarks_nav.iter(qname(_XHTML_NS, "a")):
-        kind = anchor.get(qname(_EPUB_NS, "type"))
+    for anchor in landmarks_nav.iter(qname(XHTML_NS, "a")):
+        kind = anchor.get(qname(EPUB_NS, "type"))
         href = anchor.get("href")
         if not kind or not href:
             continue
@@ -357,15 +355,11 @@ def read_landmarks(container_root: Path, package: Package) -> dict[str, str]:
 
 
 def _landmarks_nav(root: XmlElement) -> XmlElement | None:
-    for nav in root.iter(qname(_XHTML_NS, "nav")):
-        if nav.get(qname(_EPUB_NS, "type")) == "landmarks":
+    for nav in root.iter(qname(XHTML_NS, "nav")):
+        if nav.get(qname(EPUB_NS, "type")) == "landmarks":
             return nav
 
     return None
-
-
-def _parse(path: Path) -> XmlElement:
-    return etree.fromstring(path.read_bytes(), hardened_parser())
 
 
 def _resolve(base_dir: str, href: str) -> str:

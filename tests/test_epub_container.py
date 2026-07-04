@@ -1,12 +1,10 @@
 import zipfile
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import TreeReader
 
 from spantrack import epub_container
-
-TreeReader = Callable[[Path], dict[str, bytes]]
 
 
 def test_unzip_reproduces_every_file(
