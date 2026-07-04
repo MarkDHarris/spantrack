@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from spantrack import (
+    content_namespace,
     epub2_upgrade,
     epub_container,
     epubcheck,
@@ -59,6 +60,10 @@ def run(
         exclude=config.exclude,
         pick=config.pick,
     )
+
+    # Refuse a malformed content document whose root is not XHTML-namespaced before it
+    # is silently narrated as empty; runs before projection so --dry-run fails too.
+    content_namespace.require_xhtml_namespace(book_dir, selection.documents)
     projection = narration_projection.project(
         book_dir,
         selection.documents,

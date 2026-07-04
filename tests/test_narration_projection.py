@@ -171,6 +171,24 @@ def test_malformed_document_counts_zero_without_crashing(tmp_path: Path):
     assert projection.total_characters == 12
 
 
+def test_bare_namespace_document_counts_zero(tmp_path: Path):
+    # A chapter whose <html> omits the XHTML namespace has no {xhtml}body, so this
+    # best-effort preview counts it zero. The pipeline's content_namespace guard runs
+    # before projection and refuses such a document, so this zero is never surfaced.
+    book = tmp_path / "book"
+    book.mkdir(parents=True)
+    (book / "bare.xhtml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
+        "<html><head><title>t</title></head>"
+        "<body><p>Hello there.</p></body></html>",
+        encoding="utf-8",
+    )
+
+    projection = narration_projection.project(book, [_doc("bare.xhtml")], bitrate="64k")
+
+    assert projection.total_characters == 0
+
+
 def test_rejects_malformed_bitrate(tmp_path: Path):
     book = tmp_path / "book"
     _write_doc(book, "a.xhtml", "Hello there.")

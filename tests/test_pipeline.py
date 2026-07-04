@@ -1,9 +1,12 @@
+import shutil
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from spantrack import cli, epub_container, narration_projection, narration_set, pipeline
+from spantrack.content_namespace import ContentNamespaceError
 from spantrack.epubcheck import EpubcheckResult
 from spantrack.progress import ProgressReporter
 
@@ -179,6 +182,39 @@ def test_no_validation_by_default(minimal_epub_path: Path, tmp_path: Path):
     config = _config(minimal_epub_path, tmp_path)
 
     assert pipeline.run(config, validator=validator) == 0
+
+
+def _zip_dir(src_root: Path, epub_path: Path) -> Path:
+    mimetype = src_root / "mimetype"
+    with zipfile.ZipFile(epub_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(mimetype, "mimetype", compress_type=zipfile.ZIP_STORED)
+        for path in sorted(src_root.rglob("*")):
+            if path.is_file() and path != mimetype:
+                zf.write(path, path.relative_to(src_root).as_posix())
+
+    return epub_path
+
+
+def test_non_xhtml_content_document_fails_loud(
+    minimal_epub2_src: Path,
+    tmp_path: Path,
+):
+    # A chapter whose <html> omits the XHTML namespace would be silently narrated as
+    # empty by every downstream stage; the ingest guard refuses the build instead. The
+    # --dry-run path must fail too, since projection also counts such a document zero.
+    src = tmp_path / "book_src"
+    shutil.copytree(minimal_epub2_src, src)
+    (src / "OEBPS" / "chapter1.xhtml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
+        "<html><head><title>Chapter 1</title></head>"
+        "<body><h1>One</h1><p>Bare namespace.</p></body></html>",
+        encoding="utf-8",
+    )
+    epub = _zip_dir(src, tmp_path / "bad.epub")
+    config = _config(epub, tmp_path, "--dry-run")
+
+    with pytest.raises(ContentNamespaceError, match=r"chapter1\.xhtml"):
+        pipeline.run(config)
 
 
 def test_main_runs_end_to_end(minimal_epub_path: Path, tmp_path: Path):
