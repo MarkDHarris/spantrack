@@ -4,7 +4,7 @@ Selection is explicit and inspectable: every document the spine offers is either
 included or excluded with a recorded reason, so the `--dry-run` printout can justify
 each decision with no silent heuristics. Skipping is driven by `epub:type` landmarks
 (cover/toc and the `bodymatter` start-of-reading marker), the nav document, spine
-`linear="no"`, and media type. CLI overrides layer on top in a later task.
+`linear="no"`, and media type.
 """
 
 import posixpath

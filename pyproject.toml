@@ -20,7 +20,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dynamic = ["version"]
-dependencies = ["lxml>=5,<6", "pysbd==0.3.4"]
+dependencies = ["ftfy==6.3.1", "lxml>=5,<6", "pysbd==0.3.4"]
 
 [dependency-groups]
 test   = ["pytest>=8,<9", "syntok>=1.4,<2"]
@@ -102,6 +102,12 @@ convention = "google" # enforce Google-style docstring sections
   "EM102",   # f-string in `raise` is fine in tests
   "TRY003",  # exact messages are part of the test's assertion
   "TRY301",  # `raise` inside `try` is fine in tests that exercise it
+  "RUF001",  # ambiguous-unicode is the point of the normalization corpus
+  "RUF002",  # ambiguous-unicode in docstrings - same reason
+  "RUF003",  # ambiguous-unicode in comments - same reason
+]
+"tests/test_text_normalization.py" = [
+  "E501", # adversarial-string corpus rows can't wrap without hiding the data
 ]
 
 [tool.pyright]
