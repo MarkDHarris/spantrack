@@ -23,12 +23,28 @@ from spantrack.lxml_reading import (
     hardened_parser,
     parse_xml_file,
     qname,
+    split_fragment,
 )
 from spantrack.opf import XHTML_MEDIA_TYPE, Package
 
 __all__ = ["upgrade"]
 
 _NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
+
+# Base name for the synthesized nav document and its manifest id.
+_NAV_BASE_NAME = "nav"
+
+# Pre-built tag names for the XHTML nav document this stage synthesizes.
+_XHTML_HTML = qname(XHTML_NS, "html")
+_XHTML_HEAD = qname(XHTML_NS, "head")
+_XHTML_TITLE = qname(XHTML_NS, "title")
+_XHTML_BODY = qname(XHTML_NS, "body")
+_XHTML_NAV = qname(XHTML_NS, "nav")
+_XHTML_OL = qname(XHTML_NS, "ol")
+_XHTML_LI = qname(XHTML_NS, "li")
+_XHTML_A = qname(XHTML_NS, "a")
+_XHTML_SPAN = qname(XHTML_NS, "span")
+_EPUB_TYPE = qname(EPUB_NS, "type")
 
 # Translate OPF 2.0 <guide> reference types to EPUB 3 structural-semantics epub:type
 # landmark values. Guide types absent from this map are omitted from the landmarks nav
@@ -181,15 +197,15 @@ def _spine_entries(
 
 def _landmark_entries(package: Package, base_dir: str) -> tuple[_Landmark, ...]:
     landmarks: list[_Landmark] = []
-    seen: set[str] = set()
+    seen_types: set[str] = set()
     for ref in package.guide:
         epub_type = _GUIDE_TO_LANDMARK.get(ref.kind)
         # An epub:type is unique per landmarks nav; keep the first reference of each and
         # drop guide types with no valid EPUB 3 equivalent.
-        if epub_type is None or epub_type in seen:
+        if epub_type is None or epub_type in seen_types:
             continue
 
-        seen.add(epub_type)
+        seen_types.add(epub_type)
         landmarks.append(
             _Landmark(
                 epub_type=epub_type,
@@ -209,23 +225,23 @@ def _render_nav(
     # Mapping[str, str] and rejects it, so cast past the stub gap.
     nsmap = cast("dict[str, str]", {None: XHTML_NS, "epub": EPUB_NS})
 
-    html = etree.Element(qname(XHTML_NS, "html"), nsmap=nsmap)
-    head = etree.SubElement(html, qname(XHTML_NS, "head"))
-    etree.SubElement(head, qname(XHTML_NS, "title")).text = "Contents"
-    body = etree.SubElement(html, qname(XHTML_NS, "body"))
+    html = etree.Element(_XHTML_HTML, nsmap=nsmap)
+    head = etree.SubElement(html, _XHTML_HEAD)
+    etree.SubElement(head, _XHTML_TITLE).text = "Contents"
+    body = etree.SubElement(html, _XHTML_BODY)
 
     _append_list(_nav_section(body, "toc"), toc)
 
     if landmarks:
         landmarks_list = etree.SubElement(
             _nav_section(body, "landmarks"),
-            qname(XHTML_NS, "ol"),
+            _XHTML_OL,
         )
         for landmark in landmarks:
-            item = etree.SubElement(landmarks_list, qname(XHTML_NS, "li"))
-            anchor = etree.SubElement(item, qname(XHTML_NS, "a"))
+            item = etree.SubElement(landmarks_list, _XHTML_LI)
+            anchor = etree.SubElement(item, _XHTML_A)
             anchor.set("href", landmark.href)
-            anchor.set(qname(EPUB_NS, "type"), landmark.epub_type)
+            anchor.set(_EPUB_TYPE, landmark.epub_type)
             anchor.text = landmark.label
 
     body_xml = etree.tostring(html, encoding="utf-8", pretty_print=True)
@@ -235,22 +251,22 @@ def _render_nav(
 
 def _nav_section(body: XmlElement, epub_type: str) -> XmlElement:
     # Each EPUB 3 nav carries its epub:type as both the type and the element id.
-    nav = etree.SubElement(body, qname(XHTML_NS, "nav"))
-    nav.set(qname(EPUB_NS, "type"), epub_type)
+    nav = etree.SubElement(body, _XHTML_NAV)
+    nav.set(_EPUB_TYPE, epub_type)
     nav.set("id", epub_type)
 
     return nav
 
 
 def _append_list(parent: XmlElement, entries: tuple[_NavEntry, ...]) -> None:
-    ordered = etree.SubElement(parent, qname(XHTML_NS, "ol"))
+    ordered = etree.SubElement(parent, _XHTML_OL)
     for entry in entries:
-        item = etree.SubElement(ordered, qname(XHTML_NS, "li"))
+        item = etree.SubElement(ordered, _XHTML_LI)
 
         # A navPoint without a target (a structural heading) becomes a <span> label; the
         # EPUB 3 nav grammar allows it and it keeps the child hierarchy intact.
-        label_tag = "a" if entry.href is not None else "span"
-        label = etree.SubElement(item, qname(XHTML_NS, label_tag))
+        label_tag = _XHTML_A if entry.href is not None else _XHTML_SPAN
+        label = etree.SubElement(item, label_tag)
         label.text = entry.label
 
         if entry.href is not None:
@@ -296,9 +312,7 @@ def _document_title(path: Path) -> str:
     if not path.is_file():
         return ""
 
-    title = parse_xml_file(path).find(
-        f"{qname(XHTML_NS, 'head')}/{qname(XHTML_NS, 'title')}",
-    )
+    title = parse_xml_file(path).find(f"{_XHTML_HEAD}/{_XHTML_TITLE}")
 
     return (title.text or "").strip() if title is not None else ""
 
@@ -307,9 +321,9 @@ def _free_nav_target(package: Package, base_dir: str) -> tuple[str, str]:
     ids = {item.item_id for item in package.manifest}
     hrefs = {item.href for item in package.manifest}
 
-    nav_id = _unused("nav", lambda candidate: candidate in ids)
+    nav_id = _unused(_NAV_BASE_NAME, lambda candidate: candidate in ids)
     stem = _unused(
-        "nav",
+        _NAV_BASE_NAME,
         lambda candidate: posixpath.join(base_dir, f"{candidate}.xhtml") in hrefs,
     )
 
@@ -334,14 +348,14 @@ def _resolve_ncx_src(ncx_dir: str, src: str) -> str:
     check: the result is only re-relativized into the generated nav, never used for
     filesystem access.
     """
-    path, _, fragment = src.partition("#")
+    path, fragment = split_fragment(src)
     resolved = posixpath.normpath(posixpath.join(ncx_dir, path))
 
     return f"{resolved}#{fragment}" if fragment else resolved
 
 
 def _relativize(container_href: str, base_dir: str) -> str:
-    path, _, fragment = container_href.partition("#")
+    path, fragment = split_fragment(container_href)
     relative = posixpath.relpath(path, base_dir or ".")
 
     return f"{relative}#{fragment}" if fragment else relative

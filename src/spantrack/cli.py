@@ -12,6 +12,7 @@ from spantrack.run_config import (
     Granularity,
     Language,
     RunConfig,
+    parse_bitrate,
 )
 
 
@@ -59,7 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="audio_format",
         help="Chapter audio codec",
     )
-    parser.add_argument("--bitrate", default="64k", help="Audio bitrate")
+    parser.add_argument(
+        "--bitrate",
+        default="64k",
+        type=_valid_bitrate,
+        help="Audio bitrate",
+    )
     parser.add_argument(
         "--lexicon",
         type=Path,
@@ -174,7 +180,7 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
         lexicon=args.lexicon,
         include=tuple(args.include),
         exclude=tuple(args.exclude),
-        pick=_split_pick(args.pick),
+        pick=tuple(part for value in args.pick for part in value.split(",") if part),
         include_tables=args.include_tables,
         include_code=args.include_code,
         device=args.device,
@@ -184,12 +190,14 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
-def _split_pick(values: Sequence[str]) -> tuple[str, ...]:
-    picked: list[str] = []
-    for value in values:
-        picked.extend(part for part in value.split(",") if part)
+def _valid_bitrate(raw: str) -> str:
+    # Validate at parse time so a bad rate exits with argparse's code 2.
+    try:
+        parse_bitrate(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
-    return tuple(picked)
+    return raw
 
 
 def _positive_float(raw: str) -> float:

@@ -12,7 +12,6 @@ the next stage can wrap sentence runs in `<span>`s without disturbing inline mar
 """
 
 import html
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import count, pairwise
@@ -21,6 +20,7 @@ from lxml import etree
 
 from spantrack.lxml_reading import XHTML_NS, XmlElement, qname
 from spantrack.pysbd_segmentation import split_sentences
+from spantrack.text_normalization import collapse_whitespace
 
 __all__ = [
     "BlockText",
@@ -31,7 +31,6 @@ __all__ = [
     "narratable_blocks",
 ]
 
-_WHITESPACE = re.compile(r"\s+")
 _BLOCK_TAGS = frozenset(
     qname(XHTML_NS, tag)
     for tag in (
@@ -210,8 +209,10 @@ def inject_block(block: XmlElement, id_gen: Iterator[str]) -> list[tuple[str, st
     """Wrap each sentence run in the block in a `<span id>`, preserving inline markup.
 
     Sentences whose boundary falls inside an inline element merge into one sync unit, so
-    a span never splits an element. The block is mutated in place; a block with no
-    narratable sentence is left untouched.
+    a span never splits an element. The block is mutated in place: its inline elements
+    and entity-reference nodes are detached and re-emitted (moved, not copied) into the
+    span containers, so a caller must not reuse the old child structure afterward. A
+    block with no narratable sentence is left untouched.
 
     Args:
         block: A leaf block element (from `narratable_blocks`).
@@ -240,7 +241,7 @@ def inject_block(block: XmlElement, id_gen: Iterator[str]) -> list[tuple[str, st
     _rebuild(block, segments, units, span_ids)
 
     return [
-        (span_ids[index], _collapse(raw_text[start:end]))
+        (span_ids[index], collapse_whitespace(raw_text[start:end]))
         for index, (start, end) in enumerate(units)
     ]
 
@@ -411,10 +412,6 @@ def _unit_at(offset: int, units: list[tuple[int, int]]) -> int | None:
             return index
 
     return None
-
-
-def _collapse(text: str) -> str:
-    return _WHITESPACE.sub(" ", text).strip()
 
 
 class _Emitter:

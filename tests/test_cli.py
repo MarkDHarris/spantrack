@@ -102,6 +102,7 @@ def test_boolean_flags_set():
         ["book.epub", "--device", "tpu"],
         ["book.epub", "--speed", "0"],
         ["book.epub", "--speed", "notanumber"],
+        ["book.epub", "--bitrate", "fast"],
     ],
 )
 def test_invalid_arguments_exit_code_2(argv: Sequence[str] | None):

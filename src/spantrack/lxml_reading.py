@@ -16,7 +16,9 @@ __all__ = [
     "XmlElement",
     "hardened_parser",
     "parse_xml_file",
+    "parse_xml_file_or_none",
     "qname",
+    "split_fragment",
 ]
 
 # lxml names its element type with a leading underscore by convention; alias it once so
@@ -50,6 +52,33 @@ def parse_xml_file(path: Path) -> XmlElement:
     return etree.fromstring(path.read_bytes(), hardened_parser())
 
 
+def parse_xml_file_or_none(path: Path) -> XmlElement | None:
+    """Parse an untrusted EPUB XML file, or None when it is missing or malformed.
+
+    The graceful counterpart to `parse_xml_file` for stages that treat an absent or
+    not-well-formed document as a soft, skippable condition rather than an error.
+    """
+    if not path.is_file():
+        return None
+
+    try:
+        return parse_xml_file(path)
+    except etree.XMLSyntaxError:
+        return None
+
+
 def qname(namespace: str, tag: str) -> str:
     """Build a Clark-notation qualified tag name, e.g. `{namespace}tag`."""
     return f"{{{namespace}}}{tag}"
+
+
+def split_fragment(href: str) -> tuple[str, str]:
+    """Split an href into its path and its fragment (the part after `#`).
+
+    The fragment is returned without the leading `#`; both parts are empty strings when
+    the corresponding piece is absent. One home for the `partition("#")` that manifest,
+    guide, landmark, and NCX href handling would otherwise each repeat.
+    """
+    path, _, fragment = href.partition("#")
+
+    return path, fragment

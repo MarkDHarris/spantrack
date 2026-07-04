@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-from spantrack.lxml_reading import EPUB_NS, XHTML_NS, XmlElement, parse_xml_file, qname
+from spantrack.lxml_reading import (
+    EPUB_NS,
+    XHTML_NS,
+    XmlElement,
+    parse_xml_file,
+    qname,
+    split_fragment,
+)
 from spantrack.opf import (
     XHTML_MEDIA_TYPE,
     ManifestItem,
@@ -191,6 +198,13 @@ def apply_overrides(
 
 @dataclass(frozen=True, slots=True)
 class _Entry:
+    """A spine document merged from the default selection for override processing.
+
+    `reason` is the discriminator: None marks a currently-included document, a string
+    the default exclusion reason. Keyed by `spine_index` so a document appearing at two
+    spine positions keeps its distinct decisions.
+    """
+
     spine_index: int
     item_id: str
     href: str
@@ -249,8 +263,8 @@ def _apply_include_exclude(
 
         included, reason = _override_decision(
             entry.reason,
-            include_matched=_matches_any(entry.href, include),
-            exclude_matched=_matches_any(entry.href, exclude),
+            has_include_match=_matches_any(entry.href, include),
+            has_exclude_match=_matches_any(entry.href, exclude),
         )
         if included:
             documents.append(Document(entry.item_id, entry.href, entry.spine_index))
@@ -274,16 +288,16 @@ def _apply_include_exclude(
 def _override_decision(
     default_reason: str | None,
     *,
-    include_matched: bool,
-    exclude_matched: bool,
+    has_include_match: bool,
+    has_exclude_match: bool,
 ) -> tuple[bool, str | None]:
     if default_reason is None:
-        if exclude_matched:
+        if has_exclude_match:
             return False, "excluded"
 
         return True, None
 
-    if include_matched and not exclude_matched and _is_soft(default_reason):
+    if has_include_match and not has_exclude_match and _is_soft(default_reason):
         return True, None
 
     return False, default_reason
@@ -293,16 +307,21 @@ def _is_soft(reason: str) -> bool:
     return reason in _SOFT_REASONS or reason.startswith("landmark:")
 
 
+def _matches(selector: str, href: str, basename: str) -> bool:
+    return fnmatchcase(href, selector) or fnmatchcase(basename, selector)
+
+
 def _matches_any(href: str, selectors: Sequence[str]) -> bool:
     basename = posixpath.basename(href)
-    return any(
-        fnmatchcase(href, selector) or fnmatchcase(basename, selector)
-        for selector in selectors
-    )
+    return any(_matches(selector, href, basename) for selector in selectors)
 
 
 def _unmatched(entries: list[_Entry], selectors: Sequence[str]) -> tuple[str, ...]:
-    hrefs = [entry.href for entry in entries if entry.href]
+    # Pair each href with its basename once, rather than recomputing the basename for
+    # every (selector, href) combination in the loop below.
+    candidates = [
+        (entry.href, posixpath.basename(entry.href)) for entry in entries if entry.href
+    ]
     seen: set[str] = set()
     unmatched: list[str] = []
     for selector in selectors:
@@ -310,7 +329,7 @@ def _unmatched(entries: list[_Entry], selectors: Sequence[str]) -> tuple[str, ..
             continue
 
         seen.add(selector)
-        if not any(_matches_any(href, [selector]) for href in hrefs):
+        if not any(_matches(selector, href, base) for href, base in candidates):
             unmatched.append(selector)
 
     return tuple(unmatched)
@@ -370,4 +389,4 @@ def _resolve(base_dir: str, href: str) -> str:
 
 def _strip_fragment(href: str) -> str:
     """Drop the fragment from an href so it keys the fragment-less landmark map."""
-    return href.partition("#")[0]
+    return split_fragment(href)[0]

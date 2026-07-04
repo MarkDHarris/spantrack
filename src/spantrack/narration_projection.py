@@ -7,24 +7,22 @@ deliberately over-counts slightly (it does not yet honour the table/code skip ru
 the figure is a ballpark shown before the user commits to a full run.
 """
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from lxml import etree
 
-from spantrack.lxml_reading import XHTML_NS, parse_xml_file, qname
+from spantrack.lxml_reading import XHTML_NS, parse_xml_file_or_none, qname
 from spantrack.narration_set import Document
+from spantrack.run_config import parse_bitrate
+from spantrack.text_normalization import collapse_whitespace
 
 __all__ = ["DocumentProjection", "SelectionProjection", "project"]
 
 # The main assumption we make is that ~1.8m characters result in about 30 hours of
 # narration (perf envelope) and we can calculate characters per audio second from that.
 _CHARS_PER_AUDIO_SECOND = 16.7
-_WHITESPACE = re.compile(r"\s+")
-_BITRATE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([km]?)\s*$", re.IGNORECASE)
-_BITRATE_SUFFIXES = {"": 1, "k": 1_000, "m": 1_000_000}
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +64,7 @@ def project(
     Raises:
         ValueError: When `bitrate` is not a recognizable rate.
     """
-    bitrate_bps = _parse_bitrate(bitrate)
+    bitrate_bps = parse_bitrate(bitrate)
 
     per_document: list[DocumentProjection] = []
     total = 0
@@ -84,14 +82,10 @@ def project(
 
 
 def _character_count(path: Path) -> int:
-    if not path.is_file():
-        return 0
-
-    try:
-        root = parse_xml_file(path)
-    except etree.XMLSyntaxError:
-        # A malformed document counts as zero here; the projection is a best-effort
-        # preview, and segmentation is where a broken document hard-errors.
+    root = parse_xml_file_or_none(path)
+    if root is None:
+        # A missing or malformed document counts as zero here; the projection is a
+        # best-effort preview, and segmentation is where a broken document hard-errors.
         return 0
 
     etree.strip_elements(
@@ -109,15 +103,4 @@ def _character_count(path: Path) -> int:
     # strict against lxml-stubs' Iterator[str | bytes] and is not runtime-dead.
     text = "".join(chunk for chunk in body.itertext() if isinstance(chunk, str))
 
-    return len(_WHITESPACE.sub(" ", text).strip())
-
-
-def _parse_bitrate(bitrate: str) -> int:
-    match = _BITRATE.match(bitrate)
-    if match is None:
-        msg = f"invalid bitrate: {bitrate!r}"
-        raise ValueError(msg)
-
-    value, suffix = match.groups()
-
-    return int(float(value) * _BITRATE_SUFFIXES[suffix.lower()])
+    return len(collapse_whitespace(text))

@@ -1,18 +1,14 @@
 from pathlib import Path
 
 import pytest
+from narration_documents import make_document as _doc
 
 from spantrack.content_namespace import (
     ContentNamespaceError,
     require_xhtml_namespace,
 )
-from spantrack.narration_set import Document
 
 _XHTML = "http://www.w3.org/1999/xhtml"
-
-
-def _doc(href: str, spine_index: int = 0) -> Document:
-    return Document(item_id=f"id{spine_index}", href=href, spine_index=spine_index)
 
 
 def _write(root: Path, name: str, markup: str) -> None:

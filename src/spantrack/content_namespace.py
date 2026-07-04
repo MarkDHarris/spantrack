@@ -1,11 +1,10 @@
 """Refuse a content document whose root is not in the XHTML namespace.
 
 Every XML-reading stage downstream of narration-set selection assumes content documents
-live in the XHTML namespace (`{http://www.w3.org/1999/xhtml}`): the block walk matches
-Clark-notation tags (`{xhtml}p`, ...) and projection looks up `{xhtml}body`. A malformed
-EPUB 2 content document whose `<html>` omits `xmlns="…/1999/xhtml"` puts every element
-in no namespace, so those stages match nothing and silently narrate the chapter as empty
-audio.
+live in the XHTML namespace (`{http://www.w3.org/1999/xhtml}`): the block walk and the
+projection match Clark-notation XHTML tags. A malformed EPUB 2 content document whose
+`<html>` omits `xmlns=".../1999/xhtml"` puts every element in no namespace, so those
+stages match nothing and silently narrate the chapter as empty audio.
 
 Namespaces inherit down the tree, so the root element's namespace decides the whole
 document. This guard inspects the root once, after selection and before segmentation,
@@ -24,7 +23,7 @@ from pathlib import Path
 
 from lxml import etree
 
-from spantrack.lxml_reading import XHTML_NS, XmlElement, parse_xml_file
+from spantrack.lxml_reading import XHTML_NS, parse_xml_file_or_none
 from spantrack.narration_set import Document
 
 __all__ = ["ContentNamespaceError", "require_xhtml_namespace"]
@@ -50,7 +49,7 @@ def require_xhtml_namespace(
             downstream XML stage would otherwise narrate as empty audio.
     """
     for document in documents:
-        root = _parse_root(container_root / document.href)
+        root = parse_xml_file_or_none(container_root / document.href)
         if root is None:
             # Missing file or not-well-formed XML: a distinct malformation surfaced by
             # its own stage (segmentation hard-errors; projection counts zero). This
@@ -65,13 +64,3 @@ def require_xhtml_namespace(
                 f"namespace (found: {found}); cannot narrate"
             )
             raise ContentNamespaceError(msg)
-
-
-def _parse_root(path: Path) -> XmlElement | None:
-    if not path.is_file():
-        return None
-
-    try:
-        return parse_xml_file(path)
-    except etree.XMLSyntaxError:
-        return None

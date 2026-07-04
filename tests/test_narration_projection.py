@@ -2,9 +2,9 @@ import math
 from pathlib import Path
 
 import pytest
+from narration_documents import make_document as _doc
 
 from spantrack import narration_projection
-from spantrack.narration_set import Document
 
 
 def _write_doc(root: Path, name: str, text: str) -> None:
@@ -17,10 +17,6 @@ def _write_doc(root: Path, name: str, text: str) -> None:
     )
 
 
-def _doc(href: str, spine_index: int = 0) -> Document:
-    return Document(item_id=f"id{spine_index}", href=href, spine_index=spine_index)
-
-
 def test_counts_characters_across_documents(tmp_path: Path):
     book = tmp_path / "book"
     _write_doc(book, "a.xhtml", "Hello there.")
@@ -31,7 +27,6 @@ def test_counts_characters_across_documents(tmp_path: Path):
         [_doc("a.xhtml", 0), _doc("b.xhtml", 1)],
         bitrate="64k",
     )
-
     assert projection.total_characters == 16
 
 

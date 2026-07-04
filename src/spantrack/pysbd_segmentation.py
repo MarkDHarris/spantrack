@@ -40,6 +40,8 @@ class _SentenceSegmenter(Protocol):
     def segment(self, text_to_segment: str) -> list[str]: ...
 
 
+# One module-level segmenter, built once at import: pysbd's Segmenter construction is
+# expensive and it carries no per-call state, so every split reuses this instance.
 # clean=False so pysbd never rewrites the text (offsets must map back onto the DOM).
 # char_span=False so segment() returns plain strings and we rebuild contiguous offsets
 # from their lengths; pysbd's own char_span offsets misplace a repeated sentence.

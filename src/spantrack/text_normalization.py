@@ -30,7 +30,7 @@ import unicodedata
 
 import ftfy
 
-__all__ = ["normalize"]
+__all__ = ["collapse_whitespace", "normalize"]
 
 _NBSP = 0x00A0
 
@@ -61,6 +61,9 @@ _LABEL = (
     r"|[Aa]rticles?|[Tt]itles?|[Cc]hs?\.|[Bb]ks?\.|[Pp]ts?\.|[Ss]ecs?\.|[Aa]pps?\.)"
 )
 _ROMAN_CHARS = "[MDCLXVImdclxvi]"
+# The roman toolkit works together: _ROMAN_STRICT validates the spelling,
+# _ROMAN_VALUES/_ROMAN_TABLE convert between int and numeral for the round-trip
+# canonicality check, and _ROMAN_WORDS blocklists romans that are ordinary words.
 _ROMAN_STRICT = re.compile(
     r"M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})"
 )
@@ -87,8 +90,9 @@ _ROMAN_WORDS = frozenset(
 
 
 def _roman_to_int(numeral: str) -> int:
+    # `numeral` arrives uppercased and spelling-validated from `_roman_to_arabic`.
     total = previous = 0
-    for char in reversed(numeral.upper()):
+    for char in reversed(numeral):
         value = _ROMAN_VALUES[char]
         total += -value if value < previous else value
 
@@ -305,3 +309,14 @@ def normalize(text: str) -> str:
     text = _expand_roman_numerals(text)
 
     return _normalize_dashes(text)
+
+
+# --- Whitespace collapsing
+# A standalone primitive, separate from `normalize` (which preserves the author's
+# whitespace): collapse runs of whitespace for display text and character estimates.
+_WHITESPACE = re.compile(r"\s+")
+
+
+def collapse_whitespace(text: str) -> str:
+    """Collapse each run of whitespace to a single space and strip the ends."""
+    return _WHITESPACE.sub(" ", text).strip()
