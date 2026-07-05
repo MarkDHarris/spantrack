@@ -7,6 +7,7 @@ version, stamps `dcterms:modified`, and leaves the NCX in place for reader fallb
 """
 
 import posixpath
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +124,7 @@ def upgrade(container_root: Path, *, modified: str) -> Package:
         nav_href=nav_filename,
         modified=modified,
     )
+    _normalize_content_doctypes(container_root, package)
 
     return opf.read_package(container_root)
 
@@ -295,6 +297,8 @@ def _patch_opf(path: Path, *, nav_id: str, nav_href: str, modified: str) -> None
         err_msg = "OPF has no <manifest> element to register the nav document"
         raise opf.OpfError(err_msg)
 
+    _migrate_dc_opf_attributes(root, metadata)
+
     meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
     meta.set("property", "dcterms:modified")
     meta.text = modified
@@ -306,6 +310,94 @@ def _patch_opf(path: Path, *, nav_id: str, nav_href: str, modified: str) -> None
     item.set("properties", "nav")
 
     tree.write(str(path), xml_declaration=True, encoding="utf-8")
+
+
+_MARC_RELATORS = "marc:relators"
+
+# A simple XHTML PUBLIC/SYSTEM DOCTYPE, no internal subset. EPUB 2 docs carry XHTML
+# 1.0/1.1 doctypes invalid in EPUB 3; `[^\[>]*` stops at an internal subset, so an
+# entity-declaring doctype is left alone rather than broken.
+_LEGACY_DOCTYPE = re.compile(
+    rb"<!DOCTYPE\s+html\s+(?:PUBLIC|SYSTEM)\b[^\[>]*>",
+    re.IGNORECASE,
+)
+
+
+def _migrate_dc_opf_attributes(root: XmlElement, metadata: XmlElement) -> None:
+    """Convert EPUB 2 `opf:*` metadata attributes to a valid EPUB 3 shape.
+
+    EPUB 3 forbids `opf:*` attributes on `dc:*` elements. `opf:role`/`opf:file-as` move
+    to `<meta refines>` children (role carries the `marc:relators` scheme); every other
+    `opf:*` attribute (e.g. `opf:scheme`, `opf:event`) is dropped as invalid EPUB 3.
+    """
+    prefix = f"{{{OPF_NS}}}"
+    existing_ids = {value for el in root.iter() if (value := el.get("id"))}
+    for element in list(metadata):
+        opf_keys = [
+            key for key in cast("list[str]", element.keys()) if key.startswith(prefix)
+        ]
+        if not opf_keys:
+            continue
+
+        element_id = element.get("id")
+        if element_id is None:
+            element_id = _unused(
+                etree.QName(element).localname,
+                lambda candidate: candidate in existing_ids,
+            )
+            existing_ids.add(element_id)
+            element.set("id", element_id)
+
+        for key in opf_keys:
+            value = element.get(key) or ""
+            del element.attrib[key]
+
+            localname = key[len(prefix) :]
+            if localname == "role":
+                _add_refining_meta(
+                    metadata, element_id, "role", value, scheme=_MARC_RELATORS
+                )
+            elif localname == "file-as":
+                _add_refining_meta(metadata, element_id, "file-as", value)
+
+
+def _add_refining_meta(
+    metadata: XmlElement,
+    refines_id: str,
+    prop: str,
+    value: str,
+    *,
+    scheme: str | None = None,
+) -> None:
+    meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
+    meta.set("refines", f"#{refines_id}")
+    meta.set("property", prop)
+    if scheme is not None:
+        meta.set("scheme", scheme)
+
+    meta.text = value
+
+
+def _normalize_content_doctypes(container_root: Path, package: Package) -> None:
+    """Rewrite legacy XHTML DOCTYPEs in content documents to `<!DOCTYPE html>`.
+
+    Only a simple `PUBLIC`/`SYSTEM` DOCTYPE declaration is rewritten, and only that
+    declaration -- every other byte is preserved. A document with no legacy doctype, or
+    one with an internal subset, stays untouched. Fixes epubcheck HTM-004 on the
+    non-narrated content documents the pipeline never re-serializes.
+    """
+    for item in package.manifest:
+        if item.media_type != XHTML_MEDIA_TYPE:
+            continue
+
+        path = container_root / item.href
+        if not path.is_file():
+            continue
+
+        data = path.read_bytes()
+        rewritten = _LEGACY_DOCTYPE.sub(b"<!DOCTYPE html>", data, count=1)
+        if rewritten != data:
+            path.write_bytes(rewritten)
 
 
 def _document_title(path: Path) -> str:

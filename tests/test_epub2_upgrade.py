@@ -11,6 +11,7 @@ _MODIFIED = "2026-07-03T00:00:00Z"
 _XHTML = "http://www.w3.org/1999/xhtml"
 _EPUB = "http://www.idpf.org/2007/ops"
 _OPF = "http://www.idpf.org/2007/opf"
+_DC = "http://purl.org/dc/elements/1.1/"
 
 _CONTAINER_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
@@ -433,3 +434,91 @@ def test_free_nav_target_avoids_existing_names(tmp_path: Path):
     nav = package.nav_item()
     assert nav is not None
     assert (book / nav.href).is_file()
+
+
+_CH_MANIFEST = (
+    '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+    '<item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>'
+)
+_CH_SPINE = '<itemref idref="ch1"/>'
+_CH_NAVMAP = (
+    '<navPoint id="n1"><navLabel><text>C1</text></navLabel>'
+    '<content src="chapter1.xhtml"/></navPoint>'
+)
+
+
+def test_upgrade_migrates_opf_role_to_refining_meta(tmp_path: Path):
+    opf_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="2.0"'
+        ' unique-identifier="pub-id">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"'
+        ' xmlns:opf="http://www.idpf.org/2007/opf">'
+        '<dc:identifier id="pub-id">urn:uuid:2</dc:identifier>'
+        "<dc:title>T</dc:title><dc:language>en</dc:language>"
+        '<dc:creator opf:role="aut" opf:file-as="Example, A.">A. Example</dc:creator>'
+        "</metadata>"
+        f"<manifest>{_CH_MANIFEST}</manifest>"
+        f'<spine toc="ncx">{_CH_SPINE}</spine>'
+        "</package>"
+    )
+    book = _make_epub2(
+        tmp_path / "book",
+        opf_body,
+        ncx_body=_ncx(_CH_NAVMAP),
+        docs={"chapter1.xhtml": _doc("C1")},
+    )
+
+    epub2_upgrade.upgrade(book, modified=_MODIFIED)
+
+    root = etree.parse(str(book / "OEBPS" / "content.opf")).getroot()
+    creator = next(el for el in root.iter(f"{{{_DC}}}creator"))
+    assert not any(
+        isinstance(key, str) and key.startswith(f"{{{_OPF}}}") for key in creator.attrib
+    )
+    creator_id = creator.get("id")
+    assert creator_id
+
+    metas = {
+        (meta.get("property"), meta.get("refines")): (meta.text, meta.get("scheme"))
+        for meta in root.iter(f"{{{_OPF}}}meta")
+    }
+    assert metas[("role", f"#{creator_id}")] == ("aut", "marc:relators")
+    assert metas[("file-as", f"#{creator_id}")] == ("Example, A.", None)
+
+
+def test_upgrade_normalizes_legacy_content_doctype(tmp_path: Path):
+    legacy = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"'
+        ' "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>C1</title></head>'
+        "<body><p>x</p></body></html>"
+    )
+    book = _make_epub2(
+        tmp_path / "book",
+        _opf2(_CH_MANIFEST, _CH_SPINE),
+        ncx_body=_ncx(_CH_NAVMAP),
+        docs={"chapter1.xhtml": legacy},
+    )
+
+    epub2_upgrade.upgrade(book, modified=_MODIFIED)
+
+    content = (book / "OEBPS" / "chapter1.xhtml").read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in content
+    assert "XHTML 1.1" not in content
+    assert "PUBLIC" not in content
+
+
+def test_upgrade_leaves_modern_content_doc_byte_identical(tmp_path: Path):
+    modern = _doc("C1")  # already uses <!DOCTYPE html>
+    book = _make_epub2(
+        tmp_path / "book",
+        _opf2(_CH_MANIFEST, _CH_SPINE),
+        ncx_body=_ncx(_CH_NAVMAP),
+        docs={"chapter1.xhtml": modern},
+    )
+
+    epub2_upgrade.upgrade(book, modified=_MODIFIED)
+
+    assert (book / "OEBPS" / "chapter1.xhtml").read_text(encoding="utf-8") == modern
