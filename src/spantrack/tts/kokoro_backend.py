@@ -55,6 +55,13 @@ class _Audio(Protocol):
 
 
 class _Token(Protocol):
+    """One of Kokoro's `MToken`s, as yielded by the pipeline.
+
+    `start_ts`/`end_ts` mirror misaki's own field names (seconds); `_shift_tokens`
+    reads them off the real token at runtime, so they must not be renamed to the `_s`
+    suffix used by `TokenTimestamp`.
+    """
+
     @property
     def text(self) -> str: ...
 

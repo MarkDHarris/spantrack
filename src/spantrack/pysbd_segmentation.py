@@ -78,8 +78,7 @@ def split_sentences(text: str) -> list[tuple[int, int]]:
     cursor = 0
     for sentence in segments:
         start, cursor = cursor, cursor + len(sentence)
-        trimmed = _trim(text, start, cursor)
-        if trimmed is not None:
+        if (trimmed := _trim(text, start, cursor)) is not None:
             ranges.append(trimmed)
 
     return ranges

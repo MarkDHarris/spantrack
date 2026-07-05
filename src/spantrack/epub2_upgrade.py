@@ -354,8 +354,8 @@ def _resolve_ncx_src(ncx_dir: str, src: str) -> str:
     return f"{resolved}#{fragment}" if fragment else resolved
 
 
-def _relativize(container_href: str, base_dir: str) -> str:
-    path, fragment = split_fragment(container_href)
+def _relativize(resolved_href: str, base_dir: str) -> str:
+    path, fragment = split_fragment(resolved_href)
     relative = posixpath.relpath(path, base_dir or ".")
 
     return f"{relative}#{fragment}" if fragment else relative

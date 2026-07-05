@@ -75,9 +75,12 @@ def qname(namespace: str, tag: str) -> str:
 def split_fragment(href: str) -> tuple[str, str]:
     """Split an href into its path and its fragment (the part after `#`).
 
-    The fragment is returned without the leading `#`; both parts are empty strings when
-    the corresponding piece is absent. One home for the `partition("#")` that manifest,
-    guide, landmark, and NCX href handling would otherwise each repeat.
+    One home for the `partition("#")` that manifest, guide, landmark, and NCX href
+    handling would otherwise each repeat.
+
+    Returns:
+        A `(path, fragment)` pair; the fragment drops the leading `#`, and either part
+        is an empty string when absent (`split_fragment('#top')` is `('', 'top')`).
     """
     path, _, fragment = href.partition("#")
 
