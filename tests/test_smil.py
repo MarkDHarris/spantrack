@@ -1,10 +1,10 @@
-"""Tests for sentence-granularity Media Overlay SMIL emission."""
+"""Tests for Media Overlay SMIL emission (sentence and word sync units)."""
 
 import pytest
 from lxml import etree
 
 from spantrack.lxml_reading import XmlElement
-from spantrack.smil import SmilSentence, build_smil, clock_value
+from spantrack.smil import SyncUnit, build_smil, clock_value
 
 _SMIL = "http://www.w3.org/ns/SMIL"
 _EPUB = "http://www.idpf.org/2007/ops"
@@ -22,8 +22,8 @@ def _pars(xml: bytes) -> list[XmlElement]:
 
 def test_one_par_per_sentence_in_document_order():
     sentences = [
-        SmilSentence("s00001", 0.0, 1.25),
-        SmilSentence("s00002", 1.25, 2.5),
+        SyncUnit("s00001", 0.0, 1.25),
+        SyncUnit("s00002", 1.25, 2.5),
     ]
 
     pars = _pars(build_smil("chapter1.xhtml", "chapter1.mp3", sentences))
@@ -37,8 +37,8 @@ def test_one_par_per_sentence_in_document_order():
 
 def test_clip_bounds_are_gapless():
     sentences = [
-        SmilSentence("s00001", 0.0, 1.25),
-        SmilSentence("s00002", 1.25, 2.5),
+        SyncUnit("s00001", 0.0, 1.25),
+        SyncUnit("s00002", 1.25, 2.5),
     ]
 
     pars = _pars(build_smil("c.xhtml", "c.mp3", sentences))
@@ -51,11 +51,15 @@ def test_clip_bounds_are_gapless():
 
 def test_declares_smil_and_epub_namespaces_and_textref():
     root = etree.fromstring(
-        build_smil("c.xhtml", "c.mp3", [SmilSentence("s00001", 0.0, 1.0)]),
+        build_smil(
+            "c.xhtml",
+            "c.mp3",
+            [SyncUnit("s00001", 0.0, 1.0)],
+        ),
     )
-
     assert root.tag == f"{{{_SMIL}}}smil"
     assert root.get("version") == "3.0"
+
     seq = root.find(f".//{{{_SMIL}}}seq")
     assert seq is not None
     assert seq.get(f"{{{_EPUB}}}textref") == "c.xhtml"

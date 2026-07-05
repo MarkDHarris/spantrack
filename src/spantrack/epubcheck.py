@@ -90,9 +90,8 @@ def _run_subprocess(command: Sequence[str]) -> CompletedCommand:
 
 
 def _extract_messages(completed: CompletedCommand) -> tuple[str, ...]:
-    # epubcheck writes diagnostics to both stdout and stderr depending on version, so
-    # scan the two together. A line is a diagnostic when it opens with a severity token
-    # (str.startswith accepts the _MESSAGE_PREFIXES tuple); other output is dropped.
+    # epubcheck splits diagnostics across stdout and stderr depending on version, so
+    # scan the two together; a line counts only when it opens with a severity token.
     lines = f"{completed.stdout}\n{completed.stderr}".splitlines()
     stripped = (line.strip() for line in lines)
 

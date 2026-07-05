@@ -21,6 +21,7 @@ from spantrack.lxml_reading import (
     OPF_NS,
     XHTML_NS,
     XmlElement,
+    document_ids,
     hardened_parser,
     parse_xml_file,
     qname,
@@ -331,7 +332,7 @@ def _migrate_dc_opf_attributes(root: XmlElement, metadata: XmlElement) -> None:
     `opf:*` attribute (e.g. `opf:scheme`, `opf:event`) is dropped as invalid EPUB 3.
     """
     prefix = f"{{{OPF_NS}}}"
-    existing_ids = {value for el in root.iter() if (value := el.get("id"))}
+    existing_ids = document_ids(root)
     for element in list(metadata):
         opf_keys = [
             key for key in cast("list[str]", element.keys()) if key.startswith(prefix)

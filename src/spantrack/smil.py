@@ -19,14 +19,14 @@ from lxml import etree
 
 from spantrack.lxml_reading import EPUB_NS, qname
 
-__all__ = ["SMIL_NS", "SmilSentence", "build_smil", "clock_value"]
+__all__ = ["SMIL_NS", "SyncUnit", "build_smil", "clock_value"]
 
 SMIL_NS = "http://www.w3.org/ns/SMIL"
 
 
 @dataclass(frozen=True, slots=True)
-class SmilSentence:
-    """One `<par>`'s input: its span id and gapless clip bounds, in seconds."""
+class SyncUnit:
+    """One `<par>`: a span id (sentence or word) with its gapless clip bounds."""
 
     span_id: str
     clip_begin_s: float
@@ -51,25 +51,25 @@ def clock_value(seconds: float) -> str:
 def build_smil(
     text_doc_href: str,
     audio_href: str,
-    sentences: Sequence[SmilSentence],
+    units: Sequence[SyncUnit],
 ) -> bytes:
-    """Serialize a sentence-granularity Media Overlay SMIL document.
+    """Serialize a Media Overlay SMIL document: one `<par>` per sync unit.
 
     Args:
         text_doc_href: The content document href, used as the `<par>` text `src` base
             and the `<seq>` `epub:textref`.
         audio_href: The chapter audio href every `<par>`'s `<audio>` points at.
-        sentences: The sync units in document order; their clip bounds must be gapless.
+        units: The sync units in document order; their clip bounds must be gapless.
 
     Returns:
         The serialized SMIL document (UTF-8, XML-declared).
 
     Raises:
-        ValueError: If `sentences` is empty -- a Media Overlay must carry at least one
+        ValueError: If `units` is empty -- a Media Overlay must carry at least one
             `<par>`, so a chapter with no narration must not get a SMIL at all.
     """
-    if not sentences:
-        msg = "cannot build a SMIL overlay from an empty sentence list"
+    if not units:
+        msg = "cannot build a SMIL overlay from an empty sync-unit list"
         raise ValueError(msg)
 
     nsmap = cast("dict[str, str]", {None: SMIL_NS, "epub": EPUB_NS})
@@ -80,15 +80,15 @@ def build_smil(
     seq = etree.SubElement(body, qname(SMIL_NS, "seq"))
     seq.set(qname(EPUB_NS, "textref"), text_doc_href)
 
-    for sentence in sentences:
+    for unit in units:
         par = etree.SubElement(seq, qname(SMIL_NS, "par"))
         text = etree.SubElement(par, qname(SMIL_NS, "text"))
-        text.set("src", f"{text_doc_href}#{sentence.span_id}")
+        text.set("src", f"{text_doc_href}#{unit.span_id}")
 
         audio = etree.SubElement(par, qname(SMIL_NS, "audio"))
         audio.set("src", audio_href)
-        audio.set("clipBegin", clock_value(sentence.clip_begin_s))
-        audio.set("clipEnd", clock_value(sentence.clip_end_s))
+        audio.set("clipBegin", clock_value(unit.clip_begin_s))
+        audio.set("clipEnd", clock_value(unit.clip_end_s))
 
     return etree.tostring(
         smil, encoding="utf-8", xml_declaration=True, pretty_print=True

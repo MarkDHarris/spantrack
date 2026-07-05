@@ -16,6 +16,7 @@ order, so an identical sidecar always serializes to identical bytes.
 """
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -190,7 +191,7 @@ def _sentence_to_dict(sentence: SidecarSentence) -> dict[str, object]:
     }
 
 
-def _sentence_from_dict(row: Any) -> SidecarSentence:  # noqa: ANN401  JSON value is Any
+def _sentence_from_dict(row: Mapping[str, Any]) -> SidecarSentence:
     tokens = row["tokens"]
     raw_ranges = row.get("source_ranges")
     source_ranges = (

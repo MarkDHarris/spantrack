@@ -55,6 +55,9 @@ def build_g2p(*, british: bool) -> _G2P:
 
     With `fallback=None` an out-of-dictionary word is left unphonemized rather than
     guessed by espeak, which is exactly the signal the report needs.
+
+    Args:
+        british: Select the British English pronunciations instead of American.
     """
     from misaki import en  # pyright: ignore[reportMissingTypeStubs]
 

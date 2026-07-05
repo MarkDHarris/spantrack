@@ -14,6 +14,7 @@ __all__ = [
     "OPF_NS",
     "XHTML_NS",
     "XmlElement",
+    "document_ids",
     "hardened_parser",
     "parse_xml_file",
     "parse_xml_file_or_none",
@@ -70,6 +71,15 @@ def parse_xml_file_or_none(path: Path) -> XmlElement | None:
 def qname(namespace: str, tag: str) -> str:
     """Build a Clark-notation qualified tag name, e.g. `{namespace}tag`."""
     return f"{{{namespace}}}{tag}"
+
+
+def document_ids(root: XmlElement) -> set[str]:
+    """Collect every `id` attribute present anywhere in `root`'s tree.
+
+    Both span-id minting (`sentence_spans`) and nav-id minting (`epub2_upgrade`) skip
+    these so a generated id can never collide with a publisher's.
+    """
+    return {value for element in root.iter() if (value := element.get("id"))}
 
 
 def split_fragment(href: str) -> tuple[str, str]:

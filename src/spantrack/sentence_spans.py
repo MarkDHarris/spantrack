@@ -19,7 +19,7 @@ from itertools import count, pairwise
 from lxml import etree
 
 from spantrack.audio_assembly import BreakAfter
-from spantrack.lxml_reading import XHTML_NS, XmlElement, qname
+from spantrack.lxml_reading import XHTML_NS, XmlElement, document_ids, qname
 from spantrack.pysbd_segmentation import split_sentences
 from spantrack.text_normalization import collapse_whitespace
 from spantrack.word_alignment import segment_words
@@ -289,7 +289,7 @@ def inject(root: XmlElement) -> list[InjectedSpan]:
     """
     # Skip any id already used in the document so the injected ids stay unique document-
     # wide (a hard XHTML requirement, and media overlays resolve spans by id).
-    id_gen = _fresh_ids(_document_ids(root))
+    id_gen = _fresh_ids(document_ids(root))
     injected: list[InjectedSpan] = []
     for block in narratable_blocks(root):
         spans = inject_block(block, id_gen)
@@ -310,10 +310,6 @@ def inject(root: XmlElement) -> list[InjectedSpan]:
             )
 
     return injected
-
-
-def _document_ids(root: XmlElement) -> set[str]:
-    return {value for element in root.iter() if (value := element.get("id"))}
 
 
 def _fresh_ids(existing_ids: set[str]) -> Iterator[str]:
@@ -516,7 +512,7 @@ def inject_words(root: XmlElement) -> list[WordSentence]:
     word index within sentence `sNNNNN`) for word-granularity highlighting. The sentence
     stays the synthesis unit and carries the `break_after`. Mutates the tree in place.
     """
-    used = _document_ids(root)
+    used = document_ids(root)
     counter = count(1)
     injected: list[WordSentence] = []
     for block in narratable_blocks(root):

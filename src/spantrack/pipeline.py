@@ -375,7 +375,7 @@ def narrate_document(
     )
 
     sidecar_sentences: list[chapter_sidecar.SidecarSentence] = []
-    smil_sentences: list[smil.SmilSentence] = []
+    smil_sentences: list[smil.SyncUnit] = []
     for span, synth, clip in zip(spans, synthesized, chapter.clips, strict=True):
         sidecar_sentences.append(
             chapter_sidecar.SidecarSentence(
@@ -389,7 +389,7 @@ def narrate_document(
             ),
         )
         smil_sentences.append(
-            smil.SmilSentence(
+            smil.SyncUnit(
                 span.span_id,
                 clip.clip_begin_s,
                 clip.clip_end_s,
@@ -449,7 +449,7 @@ def _write_chapter_outputs(
     targets: DocumentTargets,
     chapter: audio_assembly.AssembledChapter,
     sidecar_sentences: list[chapter_sidecar.SidecarSentence],
-    smil_sentences: list[smil.SmilSentence],
+    smil_sentences: list[smil.SyncUnit],
 ) -> NarrationResult:
     """Encode the chapter mp3, write the sidecar + SMIL, and report the result.
 
@@ -497,7 +497,7 @@ def _narrate_words(
     )
 
     sidecar_sentences: list[chapter_sidecar.SidecarSentence] = []
-    smil_sentences: list[smil.SmilSentence] = []
+    smil_sentences: list[smil.SyncUnit] = []
     for sentence, synth, clip in zip(
         sentences, synthesized, chapter.clips, strict=True
     ):
@@ -543,7 +543,7 @@ def _word_pars(
     sentence: sentence_spans.WordSentence,
     tokens: tuple[TokenTimestamp, ...] | None,
     clip: audio_assembly.ClipInterval,
-) -> tuple[list[smil.SmilSentence], tuple[tuple[int, int] | None, ...] | None]:
+) -> tuple[list[smil.SyncUnit], tuple[tuple[int, int] | None, ...] | None]:
     if tokens is None:
         # The backend emits no timestamps at all: fail loud, or fall back if allowed.
         return _untimed_pars(context, sentence, clip), None
@@ -560,7 +560,7 @@ def _word_pars(
     # Drop a clip with no serialized duration: a word the backend never voiced has no
     # audio to highlight, and the span simply stays unreferenced by any <par>.
     pars = [
-        smil.SmilSentence(word.span_id, wordclip.clip_begin_s, wordclip.clip_end_s)
+        smil.SyncUnit(word.span_id, wordclip.clip_begin_s, wordclip.clip_end_s)
         for word, wordclip in zip(sentence.words, aligned.words, strict=True)
         if _has_duration(wordclip.clip_begin_s, wordclip.clip_end_s)
     ]
@@ -572,7 +572,7 @@ def _untimed_pars(
     context: NarrationContext,
     sentence: sentence_spans.WordSentence,
     clip: audio_assembly.ClipInterval,
-) -> list[smil.SmilSentence]:
+) -> list[smil.SyncUnit]:
     if not context.allow_untimed_fallback:
         msg = (
             "word mode needs per-token timestamps, but the backend produced none for "
@@ -585,7 +585,7 @@ def _untimed_pars(
 
     # Fall back to a single sentence-length highlight on the sentence's first word span.
     first = sentence.words[0].span_id
-    return [smil.SmilSentence(first, clip.clip_begin_s, clip.clip_end_s)]
+    return [smil.SyncUnit(first, clip.clip_begin_s, clip.clip_end_s)]
 
 
 def _reuse_duration(
