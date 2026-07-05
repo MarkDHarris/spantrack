@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="en">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="pub-id">urn:uuid:5f1e0000-0000-4000-8000-000000000003</dc:identifier>
+    <dc:title>The Pocket Anthology</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2026-07-05T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="css" href="style.css" media-type="text/css"/>
+    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+    <item id="foreword" href="foreword.xhtml" media-type="application/xhtml+xml"/>
+    <item id="story-clock" href="story-clock.xhtml" media-type="application/xhtml+xml"/>
+    <item id="story-tide" href="story-tide.xhtml" media-type="application/xhtml+xml"/>
+    <item id="story-lamp" href="story-lamp.xhtml" media-type="application/xhtml+xml"/>
+    <item id="colophon" href="colophon.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="cover"/>
+    <itemref idref="foreword"/>
+    <itemref idref="story-clock"/>
+    <itemref idref="story-tide"/>
+    <itemref idref="story-lamp"/>
+    <itemref idref="colophon" linear="no"/>
+  </spine>
+</package>

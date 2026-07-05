@@ -129,6 +129,12 @@ convention = "google" # enforce Google-style docstring sections
 "src/spantrack/oov_report.py" = [
   "PLC0415", # the misaki import is lazy - it pulls spacy, so keep this module cheap to import
 ]
+"examples/**/*.py" = [
+  "INP001",  # each example is a standalone script, run directly, not an importable package
+  "T201",    # examples print their results to stdout - that is what they are for
+  "S101",    # a plain assert is a fine, readable sanity-check on an example's output
+  "PLR2004", # inline literals read better than a constants block in a short teaching script
+]
 
 [tool.pyright]
 include          = ["src", "tests"]

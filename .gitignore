@@ -19,3 +19,7 @@ __pycache__
 *.egg-info
 build
 dist
+
+// Example run artifacts (produced by running spantrack on the sample EPUBs)
+examples/**/*.narrated.epub
+examples/**/*.spantrack/
