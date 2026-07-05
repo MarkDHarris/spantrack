@@ -218,6 +218,17 @@ def test_rejects_absolute_href(tmp_path: Path):
         opf.read_package(_write_container(tmp_path / "book", body))
 
 
+def test_rejects_backslash_separated_href(tmp_path: Path):
+    # A backslash href stays one component under posixpath but escapes once a Windows
+    # Path joins it, so it is rejected like an absolute href.
+    body = _opf_with_manifest(
+        '<item id="ok" href="..\\evil.xhtml" media-type="application/xhtml+xml"/>',
+    )
+
+    with pytest.raises(opf.OpfError, match="outside the container"):
+        opf.read_package(_write_container(tmp_path / "book", body))
+
+
 def test_selects_opf_rootfile_by_media_type(tmp_path: Path):
     rootfiles = (
         '    <rootfile full-path="cover.pdf" media-type="application/pdf"/>\n'

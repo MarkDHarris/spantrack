@@ -1,5 +1,6 @@
 """Tests for build.json run-parameter fingerprint + per-doc checkpoints."""
 
+import json
 from pathlib import Path
 
 from spantrack import build_state
@@ -19,6 +20,29 @@ def _parameters(
         bitrate=64_000,
         selection=selection,
     )
+
+
+def _stored(
+    *,
+    schema_version: int = 1,
+    parameters: dict[str, object] | None = None,
+) -> str:
+    # A payload that would restore `completed` if it were well-formed and current.
+    payload = {
+        "schema_version": schema_version,
+        "parameters": parameters
+        if parameters is not None
+        else {
+            "voice": "af_heart",
+            "speed": 1.0,
+            "granularity": "sentence",
+            "audio_format": "mp3",
+            "bitrate": 64_000,
+            "selection": ["ch1.xhtml", "ch2.xhtml"],
+        },
+        "completed": ["ch1.xhtml"],
+    }
+    return json.dumps(payload)
 
 
 def test_load_missing_returns_a_fresh_state(tmp_path: Path):
@@ -69,6 +93,27 @@ def test_malformed_build_json_is_a_clean_start(tmp_path: Path):
     state = build_state.load(path, _parameters())
 
     assert not state.is_done("ch1.xhtml")
+
+
+def test_unknown_schema_version_is_a_clean_start(tmp_path: Path):
+    path = tmp_path / "build.json"
+    path.write_text(_stored(schema_version=999), encoding="utf-8")
+
+    assert not build_state.load(path, _parameters()).is_done("ch1.xhtml")
+
+
+def test_non_object_json_is_a_clean_start(tmp_path: Path):
+    path = tmp_path / "build.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    assert not build_state.load(path, _parameters()).is_done("ch1.xhtml")
+
+
+def test_wrong_shaped_parameters_is_a_clean_start(tmp_path: Path):
+    path = tmp_path / "build.json"
+    path.write_text(_stored(parameters={"voice": "af_heart"}), encoding="utf-8")
+
+    assert not build_state.load(path, _parameters()).is_done("ch1.xhtml")
 
 
 def test_save_is_byte_deterministic(tmp_path: Path):

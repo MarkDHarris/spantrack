@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from lxml import etree
 
 from spantrack.highlight_css import (
@@ -76,3 +77,13 @@ def test_link_into_head_leaves_body_untouched():
     link_into_head(root, _HREF)
 
     assert etree.tostring(body) == before
+
+
+def test_link_into_head_raises_without_head():
+    root = etree.fromstring(
+        f'<html xmlns="{_XHTML}"><body><p>x</p></body></html>'.encode(),
+        hardened_parser(),
+    )
+
+    with pytest.raises(ValueError, match="no <head>"):
+        link_into_head(root, _HREF)

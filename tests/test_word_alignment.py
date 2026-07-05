@@ -216,11 +216,30 @@ def test_real_word_after_an_expansion_is_not_starved():
     assert result.source_ranges[2] == (6, 7)  # expansion tokens map to "3"
 
 
+def test_punctuation_only_token_does_not_advance_the_word():
+    # A timed comma token has an empty key, so it must stay on the current word rather
+    # than consuming "there" (exercises the `if key` guards in _assign).
+    tokens = [
+        _tok("hi", 0.0, 0.3),
+        _tok(",", 0.3, 0.35),
+        _tok("there", 0.35, 0.7),
+    ]
+
+    result = align(segment_words("hi there"), tokens)
+
+    assert _ranges(result) == [(0, 2), (3, 8)]
+    assert result.source_ranges == ((0, 2), (0, 2), (3, 8))
+
+
 def test_out_of_order_token_end_never_inverts_a_clip():
     # Defensive: a regressing token end (outside the spoken-order contract) must not
     # yield a negative-duration clip, which would be invalid SMIL.
     result = align(
-        segment_words("go now"), [_tok("go", 0.0, 1.5), _tok("now", 0.2, 0.8)]
+        segment_words("go now"),
+        [
+            _tok("go", 0.0, 1.5),
+            _tok("now", 0.2, 0.8),
+        ],
     )
 
     for clip in result.words:

@@ -3,9 +3,11 @@
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 from spantrack.lxml_reading import (
     XHTML_NS,
+    parse_xml_file,
     parse_xml_file_or_none,
     qname,
     split_fragment,
@@ -48,3 +50,22 @@ def test_parse_xml_file_or_none_returns_none_for_malformed(tmp_path: Path):
     path.write_text("<html><body><p>oops</wrong></body></html>", encoding="utf-8")
 
     assert parse_xml_file_or_none(path) is None
+
+
+def test_hardened_parser_does_not_expand_external_entities(tmp_path: Path):
+    # XXE guard: a SYSTEM entity pointing at a local file must never be expanded, so its
+    # contents can't leak into the parsed tree. Locks resolve_entities=False / load_dtd=
+    # False / no_network=True -- dropping any of them would leak the secret here.
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET", encoding="utf-8")
+    doc = tmp_path / "xxe.xml"
+    doc.write_text(
+        '<?xml version="1.0"?>\n'
+        f'<!DOCTYPE root [ <!ENTITY xxe SYSTEM "{secret.as_uri()}"> ]>\n'
+        "<root>&xxe;</root>",
+        encoding="utf-8",
+    )
+
+    root = parse_xml_file(doc)
+
+    assert "TOP-SECRET" not in etree.tostring(root, encoding="unicode")

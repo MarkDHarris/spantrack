@@ -60,3 +60,22 @@ def test_validate_invokes_epubcheck_with_resolved_path(tmp_path: Path):
 def test_validate_raises_when_binary_absent(tmp_path: Path):
     with pytest.raises(epubcheck.EpubcheckNotFoundError, match="epubcheck"):
         epubcheck.validate(tmp_path / "book.epub", executable="spantrack-no-such-tool")
+
+
+def test_collects_severity_lines_from_both_streams_and_drops_noise(tmp_path: Path):
+    run = _recording_runner(
+        1,
+        stdout="Validating using EPUB version 3.3 rules.\nWARNING(OPF-096): dated\n",
+        stderr="ERROR(RSC-005): missing attr\nCheck finished with 2 messages\n",
+    )
+    result = epubcheck.validate(
+        tmp_path / "book.epub",
+        locate=lambda _: "epubcheck",
+        runner=run,
+    )
+
+    # stdout severity lines precede stderr; the non-severity progress lines are dropped.
+    assert result.messages == (
+        "WARNING(OPF-096): dated",
+        "ERROR(RSC-005): missing attr",
+    )
