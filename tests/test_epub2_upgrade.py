@@ -408,8 +408,6 @@ def test_free_nav_target_avoids_existing_names(tmp_path: Path):
     manifest = (
         '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
         '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"/>'
-        '<item id="spantrack-nav" href="spantrack-nav.xhtml"'
-        ' media-type="application/xhtml+xml"/>'
         '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
     )
     book = _make_epub2(
@@ -421,7 +419,6 @@ def test_free_nav_target_avoids_existing_names(tmp_path: Path):
         ),
         docs={
             "nav.xhtml": _doc("stale"),
-            "spantrack-nav.xhtml": _doc("stale"),
             "c1.xhtml": _doc("One"),
         },
     )
@@ -434,6 +431,11 @@ def test_free_nav_target_avoids_existing_names(tmp_path: Path):
     nav = package.nav_item()
     assert nav is not None
     assert (book / nav.href).is_file()
+    # `nav` and `nav.xhtml` are both taken, so the generator steps past them to `nav-1`;
+    # without pinning the stepped name a regression reusing `nav.xhtml` would silently
+    # overwrite the stale file and still pass the existence check above.
+    assert nav.item_id == "nav-1"
+    assert nav.href.endswith("nav-1.xhtml")
 
 
 _CH_MANIFEST = (

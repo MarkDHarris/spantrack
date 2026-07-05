@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from spantrack import atomic_write
 from spantrack.tts.backend import TokenTimestamp, token_from_dict, token_to_dict
 
 __all__ = [
@@ -113,9 +114,8 @@ def write(path: Path, sidecar: ChapterSidecar) -> None:
         },
         "sentences": [_sentence_to_dict(sentence) for sentence in sidecar.sentences],
     }
-    tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    atomic_write.replace(path, lambda tmp: tmp.write_text(text, encoding="utf-8"))
 
 
 def read(path: Path) -> ChapterSidecar:

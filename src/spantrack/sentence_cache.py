@@ -22,6 +22,7 @@ import numpy as np
 import soundfile  # pyright: ignore[reportMissingTypeStubs]
 from numpy.typing import NDArray
 
+from spantrack import atomic_write
 from spantrack.tts.backend import (
     SAMPLE_RATE,
     Pcm,
@@ -114,19 +115,24 @@ class SentenceCache:
         return self._shard(key) / f"{key}.tokens.json"
 
     def _write_wav(self, path: Path, pcm: Pcm) -> None:
-        tmp = path.with_name(f"{path.name}.tmp")
-        # The temp name ends in `.tmp`, so soundfile cannot infer the container from the
-        # extension -- name it explicitly.
-        _sf.write(str(tmp), pcm, SAMPLE_RATE, subtype="FLOAT", format="WAV")
-        tmp.replace(path)
+        # soundfile can't infer the container from the `.tmp` suffix -- name it WAV.
+        atomic_write.replace(
+            path,
+            lambda tmp: _sf.write(
+                str(tmp),
+                pcm,
+                SAMPLE_RATE,
+                subtype="FLOAT",
+                format="WAV",
+            ),
+        )
 
     def _write_tokens(
         self, path: Path, tokens: tuple[TokenTimestamp, ...] | None
     ) -> None:
         rows = None if tokens is None else [token_to_dict(token) for token in tokens]
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        text = json.dumps(rows, ensure_ascii=False)
+        atomic_write.replace(path, lambda tmp: tmp.write_text(text, encoding="utf-8"))
 
     def _read_tokens(self, path: Path) -> tuple[TokenTimestamp, ...] | None:
         raw = json.loads(path.read_text(encoding="utf-8"))

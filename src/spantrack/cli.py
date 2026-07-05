@@ -103,18 +103,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit content documents to narrate (repeatable, comma-separated)",
     )
     parser.add_argument(
-        "--include-tables",
-        action="store_true",
-        dest="include_tables",
-        help="Narrate table content (skipped by default)",
-    )
-    parser.add_argument(
-        "--include-code",
-        action="store_true",
-        dest="include_code",
-        help="Narrate pre/code content (skipped by default)",
-    )
-    parser.add_argument(
         "--device",
         choices=tuple(Device),
         type=Device,
@@ -197,8 +185,6 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
         include=tuple(args.include),
         exclude=tuple(args.exclude),
         pick=tuple(part for value in args.pick for part in value.split(",") if part),
-        include_tables=args.include_tables,
-        include_code=args.include_code,
         device=args.device,
         dry_run=args.dry_run,
         oov_report=args.oov_report,

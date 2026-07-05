@@ -65,8 +65,6 @@ class RunConfig:
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     pick: tuple[str, ...]
-    include_tables: bool
-    include_code: bool
     device: Device
     dry_run: bool
     oov_report: bool

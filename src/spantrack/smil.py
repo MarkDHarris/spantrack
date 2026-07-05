@@ -1,9 +1,14 @@
-"""Media Overlay SMIL emission (sentence granularity).
+"""Media Overlay SMIL emission, one document per content document.
 
-One SMIL document per content document ties each injected sentence `<span>` to its clip
-in the chapter audio. The clip bounds come straight from the assembler's gapless
-intervals (`clipEnd_n == clipBegin_{n+1}`), so the overlay never flickers and never
-trips epubcheck's overlay-gap checks -- this module only serializes them.
+`build_smil` is the shared, granularity-agnostic emitter: it ties each injected `<span>`
+-- a sentence or a word -- to a clip in the chapter audio, regardless of how the caller
+derived the clip bounds. This module only serializes what it is handed and requires the
+clips be gapless (`clipEnd_n == clipBegin_{n+1}`).
+
+In sentence mode the assembler's gapless intervals meet that requirement, so the overlay
+never flickers and never trips epubcheck's overlay-gap checks. In word mode the bounds
+come from per-token timestamps and the caller drops zero-duration clips, so exact
+gaplessness is not guaranteed there (the accepted experimental word-mode drift).
 """
 
 from collections.abc import Sequence

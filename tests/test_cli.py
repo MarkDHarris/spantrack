@@ -25,8 +25,6 @@ def test_defaults_are_resolved():
     assert config.include == ()
     assert config.exclude == ()
     assert config.pick == ()
-    assert config.include_tables is False
-    assert config.include_code is False
     assert config.device == "auto"
     assert config.dry_run is False
     assert config.oov_report is False
@@ -79,8 +77,6 @@ def test_boolean_flags_set():
     config = cli.parse_args(
         [
             "book.epub",
-            "--include-tables",
-            "--include-code",
             "--dry-run",
             "--clean",
             "--validate",
@@ -88,8 +84,6 @@ def test_boolean_flags_set():
         ]
     )
 
-    assert config.include_tables
-    assert config.include_code
     assert config.dry_run
     assert config.clean
     assert config.validate

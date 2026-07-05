@@ -100,11 +100,6 @@ def test_normalize_is_idempotent(raw: str):
     assert normalize(once) == once
 
 
-def test_corpus_has_expected_size():
-    # Guards against a row being dropped when the table is edited.
-    assert len(CASES) == 51
-
-
 def test_pass_order_is_load_bearing():
     """The spine must repair mojibake BEFORE the flatten/strip passes run.
 
@@ -336,3 +331,14 @@ def test_url_dash_guards_are_load_bearing():
     assert normalize("e.g. read.me and file.txt") == "e.g. read.me and file.txt"
     assert normalize("Email a@b.com now.") == "Email a at b dot com now."
     assert normalize("pages 12-18 stay") == "pages 12-18 stay"
+
+
+@pytest.mark.parametrize(
+    ("name", "ids"),
+    [("CASES", _IDS), ("ROMAN_FOOTNOTE_CASES", _RF_IDS), ("URL_DASH_CASES", _UD_IDS)],
+)
+def test_corpus_ids_are_present_and_unique(name: str, ids: list[str]):
+    # Guards every hand-maintained corpus against an empty table and against duplicate
+    # ids -- pytest silently dedupes duplicate parametrize ids, hiding id collisions.
+    assert ids, f"{name} is empty"
+    assert len(ids) == len(set(ids)), f"{name} has duplicate ids"

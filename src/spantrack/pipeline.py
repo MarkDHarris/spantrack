@@ -9,7 +9,7 @@ import importlib.metadata
 import posixpath
 import shutil
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -116,15 +116,6 @@ class NarrationResult:
 
     duration_s: float
     sentence_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class _Synthesized:
-    span: sentence_spans.InjectedSpan
-    normalized_text: str
-    cache_key: str
-    pcm: Pcm
-    tokens: tuple[TokenTimestamp, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,43 +366,43 @@ def narrate_document(
     if not spans:
         return NarrationResult(duration_s=0.0, sentence_count=0)
 
-    for output in (targets.audio_path, targets.smil_path, targets.sidecar_path):
-        output.parent.mkdir(parents=True, exist_ok=True)
-
-    synthesized = [_synthesize_span(context, span) for span in spans]
+    synthesized = [_synthesize_text(context, span.display_text) for span in spans]
     chapter = audio_assembly.assemble(
-        [(item.pcm, item.span.break_after) for item in synthesized],
-    )
-    audio_assembly.encode_chapter(
-        chapter.pcm,
-        targets.audio_path,
-        bitrate=context.bitrate,
+        [
+            (synth.pcm, span.break_after)
+            for span, synth in zip(spans, synthesized, strict=True)
+        ],
     )
 
     sidecar_sentences: list[chapter_sidecar.SidecarSentence] = []
     smil_sentences: list[smil.SmilSentence] = []
-    for item, clip in zip(synthesized, chapter.clips, strict=True):
+    for span, synth, clip in zip(spans, synthesized, chapter.clips, strict=True):
         sidecar_sentences.append(
             chapter_sidecar.SidecarSentence(
-                span_id=item.span.span_id,
+                span_id=span.span_id,
                 clip_begin_s=clip.clip_begin_s,
                 clip_end_s=clip.clip_end_s,
-                display_text=item.span.display_text,
-                normalized_text=item.normalized_text,
-                cache_key=item.cache_key,
-                tokens=_shift_tokens(item.tokens, clip.clip_begin_s),
+                display_text=span.display_text,
+                normalized_text=synth.normalized_text,
+                cache_key=synth.cache_key,
+                tokens=_shift_tokens(synth.tokens, clip.clip_begin_s),
             ),
         )
         smil_sentences.append(
-            smil.SmilSentence(item.span.span_id, clip.clip_begin_s, clip.clip_end_s),
+            smil.SmilSentence(
+                span.span_id,
+                clip.clip_begin_s,
+                clip.clip_end_s,
+            ),
         )
 
-    _write_sidecar(context, targets, chapter.duration_s, sidecar_sentences)
-    targets.smil_path.write_bytes(
-        smil.build_smil(targets.doc_href, targets.audio_href, smil_sentences),
+    return _write_chapter_outputs(
+        context,
+        targets,
+        chapter,
+        sidecar_sentences,
+        smil_sentences,
     )
-
-    return NarrationResult(duration_s=chapter.duration_s, sentence_count=len(spans))
 
 
 class UntimedNarrationError(RuntimeError):
@@ -453,17 +444,37 @@ def _synthesize_text(context: NarrationContext, display_text: str) -> _Synthesis
     )
 
 
-def _synthesize_span(
+def _write_chapter_outputs(
     context: NarrationContext,
-    span: sentence_spans.InjectedSpan,
-) -> _Synthesized:
-    synth = _synthesize_text(context, span.display_text)
-    return _Synthesized(
-        span=span,
-        normalized_text=synth.normalized_text,
-        cache_key=synth.cache_key,
-        pcm=synth.pcm,
-        tokens=synth.tokens,
+    targets: DocumentTargets,
+    chapter: audio_assembly.AssembledChapter,
+    sidecar_sentences: list[chapter_sidecar.SidecarSentence],
+    smil_sentences: list[smil.SmilSentence],
+) -> NarrationResult:
+    """Encode the chapter mp3, write the sidecar + SMIL, and report the result.
+
+    Each granularity builds its own sidecar/`<par>` rows and applies its own
+    empty-`<par>` guard, then hands them here. Encoding runs after the rows exist, so a
+    chapter with nothing to highlight is skipped upstream before any audio is written.
+    """
+    for output in (targets.audio_path, targets.smil_path, targets.sidecar_path):
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+    audio_assembly.encode_chapter(
+        chapter.pcm, targets.audio_path, bitrate=context.bitrate
+    )
+    _write_sidecar(context, targets, chapter.duration_s, sidecar_sentences)
+    targets.smil_path.write_bytes(
+        smil.build_smil(
+            targets.doc_href,
+            targets.audio_href,
+            smil_sentences,
+        ),
+    )
+
+    return NarrationResult(
+        duration_s=chapter.duration_s,
+        sentence_count=len(sidecar_sentences),
     )
 
 
@@ -508,26 +519,17 @@ def _narrate_words(
 
     if not smil_sentences:
         # Every word was silent or sub-millisecond, so nothing is highlightable. Skip
-        # the chapter like a non-narrated document; encoding is below this guard, so no
-        # unreferenced audio is written or orphaned.
+        # the chapter like a non-narrated document; _write_chapter_outputs encodes below
+        # this guard, so no unreferenced audio is written or orphaned.
         return NarrationResult(duration_s=0.0, sentence_count=0)
 
-    for output in (targets.audio_path, targets.smil_path, targets.sidecar_path):
-        output.parent.mkdir(parents=True, exist_ok=True)
-
-    audio_assembly.encode_chapter(
-        chapter.pcm, targets.audio_path, bitrate=context.bitrate
+    return _write_chapter_outputs(
+        context,
+        targets,
+        chapter,
+        sidecar_sentences,
+        smil_sentences,
     )
-    _write_sidecar(context, targets, chapter.duration_s, sidecar_sentences)
-    targets.smil_path.write_bytes(
-        smil.build_smil(
-            targets.doc_href,
-            targets.audio_href,
-            smil_sentences,
-        ),
-    )
-
-    return NarrationResult(duration_s=chapter.duration_s, sentence_count=len(sentences))
 
 
 def _has_duration(clip_begin_s: float, clip_end_s: float) -> bool:
@@ -648,12 +650,7 @@ def _shift_tokens(
         return None
 
     return tuple(
-        TokenTimestamp(
-            text=token.text,
-            start_s=token.start_s + offset,
-            end_s=token.end_s + offset,
-            whitespace=token.whitespace,
-        )
+        replace(token, start_s=token.start_s + offset, end_s=token.end_s + offset)
         for token in tokens
     )
 

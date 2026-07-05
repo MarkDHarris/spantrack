@@ -8,6 +8,7 @@ before the cache write, cached audio is canonical regardless of backend, and the
 assembler can insert its own exact gaps between sentences.
 """
 
+from dataclasses import replace
 from typing import Protocol
 
 import numpy as np
@@ -89,12 +90,7 @@ def _trim_silence(
 
     shift = lead / SAMPLE_RATE
     shifted = tuple(
-        TokenTimestamp(
-            text=token.text,
-            start_s=token.start_s - shift,
-            end_s=token.end_s - shift,
-            whitespace=token.whitespace,
-        )
+        replace(token, start_s=token.start_s - shift, end_s=token.end_s - shift)
         for token in tokens
     )
     return trimmed, shifted

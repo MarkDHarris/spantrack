@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from spantrack import atomic_write
+
 __all__ = ["BuildParameters", "BuildState", "load", "save"]
 
 # Bumped if the on-disk shape changes; an unrecognized version reads as a clean start.
@@ -79,9 +81,8 @@ def save(path: Path, state: BuildState) -> None:
         "completed": sorted(state.completed),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    atomic_write.replace(path, lambda tmp: tmp.write_text(text, encoding="utf-8"))
 
 
 def _read(path: Path) -> BuildState | None:
