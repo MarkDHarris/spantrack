@@ -112,3 +112,15 @@ def test_all_silence_trims_to_empty(tmp_path: Path):
     pcm, _ = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
 
     assert len(pcm) == 0
+
+
+def test_all_silence_drops_stale_timestamps(tmp_path: Path):
+    # Fully-silent audio has no content for the timestamps to describe; a
+    # timestamp-capable backend's tokens must not survive as stale spans into empty
+    # audio (they would describe time ranges the output no longer contains).
+    tokens = (TokenTimestamp("hi", 0.0, 0.5, ""),)
+    backend = _FakeBackend(np.zeros(8_000, dtype=np.float32), tokens)
+    pcm, out_tokens = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
+
+    assert len(pcm) == 0
+    assert out_tokens == ()

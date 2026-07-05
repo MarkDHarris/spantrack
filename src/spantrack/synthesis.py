@@ -72,10 +72,15 @@ def _trim_silence(
     pcm: Pcm,
     tokens: tuple[TokenTimestamp, ...] | None,
 ) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]:
-    """Trim leading/trailing silence and shift token timestamps by the trimmed lead."""
+    """Trim leading/trailing silence; shift token timestamps by the trimmed lead.
+
+    Fully-silent audio yields empty PCM and no tokens: any timestamps would describe
+    content the output no longer contains, so a timestamp-capable backend's tokens
+    collapse to `()` while a token-less backend stays `None`.
+    """
     loud = np.flatnonzero(np.abs(pcm) > _SILENCE_THRESHOLD)
     if loud.size == 0:
-        return pcm[:0], tokens
+        return pcm[:0], None if tokens is None else ()
 
     lead = int(loud[0])
     trimmed = pcm[lead : int(loud[-1]) + 1]
