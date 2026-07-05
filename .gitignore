@@ -1,7 +1,10 @@
 // Miscellaneous
 .claude
 .docs
+
+// EPUB stuff
 .epubs
+.epubcheck
 
 // Cache stuff
 .ruff_cache
