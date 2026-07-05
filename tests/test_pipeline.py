@@ -125,6 +125,20 @@ def test_dry_run_prints_selection_to_stream(
     assert "projected" in err
 
 
+def test_oov_report_lists_missing_words_and_writes_no_output(
+    minimal_epub2_path: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    # End-to-end smoke: the real misaki G2P runs over the fixture's normalized text,
+    # the review list is emitted, and no output EPUB is written (emit-then-exit).
+    config = _config(minimal_epub2_path, tmp_path, "--oov-report")
+
+    assert pipeline.run(config) == 0
+    assert not config.output.exists()
+    assert "vocabulary" in capsys.readouterr().err
+
+
 def test_clean_rebuilds_work_dir(minimal_epub_path: Path, tmp_path: Path):
     work = tmp_path / "work"
     work.mkdir()

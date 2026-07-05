@@ -1,7 +1,7 @@
 """Sequence the conversion stages and hand artifacts between them."""
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,11 +10,15 @@ from spantrack import (
     epub2_upgrade,
     epub_container,
     epubcheck,
+    lxml_reading,
     narration_projection,
     narration_set,
+    oov_report,
+    sentence_spans,
+    text_normalization,
 )
 from spantrack.progress import ProgressReporter
-from spantrack.run_config import RunConfig
+from spantrack.run_config import Language, RunConfig
 
 __all__ = ["run"]
 
@@ -34,9 +38,10 @@ def run(
     Unpacks the container, upgrades EPUB 2 inputs to EPUB 3, resolves the narration set,
     refuses any non-XHTML content document, and projects the narration scale.
 
-    A `--dry-run` returns after reporting the projection; a full run then repacks the
-    book into the output EPUB (still a passthrough of the upgraded copy). Sentence-span
-    injection and synthesis slot in before the repack in a later phase.
+    A `--dry-run` returns after reporting the projection and `--oov-report` after
+    listing the words the lexicon misses; a full run then repacks the book into the
+    output EPUB (still a passthrough of the upgraded copy). Synthesis slots in before
+    the repack in a later phase.
 
     Args:
         config: The resolved run configuration.
@@ -72,6 +77,16 @@ def run(
     # Refuse a malformed content document whose root is not XHTML-namespaced before it
     # is silently narrated as empty; runs before projection so --dry-run fails too.
     content_namespace.require_xhtml_namespace(book_dir, selection.documents)
+
+    if config.oov_report:
+        reporter.selection(selection)
+        words = oov_report.find_oov(
+            _normalized_sentences(book_dir, selection.documents),
+            oov_report.build_g2p(british=config.lang is Language.EN_GB),
+        )
+        reporter.oov(words)
+        return 0
+
     projection = narration_projection.project(
         book_dir,
         selection.documents,
@@ -91,6 +106,21 @@ def run(
         return _report_validation(validator(config.output), reporter)
 
     return 0
+
+
+def _normalized_sentences(
+    book_dir: Path,
+    documents: Sequence[narration_set.Document],
+) -> Iterator[str]:
+    # Preview the text synthesis will see, reusing the segment + normalize stages.
+    # The tree is injected in memory and discarded; the container is untouched.
+    for document in documents:
+        root = lxml_reading.parse_xml_file_or_none(book_dir / document.href)
+        if root is None:
+            continue
+
+        for display_text in sentence_spans.inject(root).values():
+            yield text_normalization.normalize(display_text)
 
 
 def _source_modified(path: Path) -> str:

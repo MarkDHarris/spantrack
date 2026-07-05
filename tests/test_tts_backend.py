@@ -1,12 +1,14 @@
 """Tests for the TTSBackend protocol contract, exercised via a fake backend."""
 
 import re
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from spantrack.lexicon import Lexicon, load
-from spantrack.tts.backend import TTSBackend
+from spantrack.tts.backend import TokenTimestamp, TTSBackend
 
 # A fake backend's phoneme "inventory": lowercase letters and space. The real Kokoro
 # inventory is the misaki set.
@@ -29,9 +31,27 @@ class _FakeBackend:
 
         return re.sub(r"[A-Za-z]+", override, text)
 
+    def synthesize(self, text: str):
+        # One flat second of silence per token, tokens timed back-to-back.
+        words = text.split()
+        pcm = np.zeros(24_000 * max(len(words), 1), dtype=np.float32)
+        tokens = tuple(
+            TokenTimestamp(text=w, start_s=float(i), end_s=float(i + 1), whitespace=" ")
+            for i, w in enumerate(words)
+        )
+        return pcm, tokens
+
+
+class _NoSynthesize:
+    """A backend with the lexicon hooks but missing `synthesize`."""
+
+    def validate_lexicon(self, lexicon: Lexicon) -> None: ...
+
+    def apply_lexicon(self, text: str, lexicon: Lexicon) -> str: ...
+
 
 class _OnlyValidate:
-    """A partial implementation missing `apply_lexicon`."""
+    """A partial implementation missing `apply_lexicon` and `synthesize`."""
 
     def validate_lexicon(self, lexicon: Lexicon) -> None: ...
 
@@ -55,10 +75,37 @@ def test_partial_implementation_is_not_a_backend():
     assert not isinstance(_OnlyValidate(), TTSBackend)
 
 
+def test_backend_without_synthesize_is_not_a_backend():
+    assert not isinstance(_NoSynthesize(), TTSBackend)
+
+
 def test_fake_type_checks_against_protocol():
     # A static conformance check: pyright strict verifies the method signatures.
     backend: TTSBackend = _FakeBackend()
     assert isinstance(backend, TTSBackend)
+
+
+def test_synthesize_returns_pcm_and_timestamps():
+    pcm, tokens = _FakeBackend().synthesize("one two")
+    assert pcm.dtype == np.float32
+    assert tokens == (
+        TokenTimestamp(text="one", start_s=0.0, end_s=1.0, whitespace=" "),
+        TokenTimestamp(text="two", start_s=1.0, end_s=2.0, whitespace=" "),
+    )
+
+
+def test_token_timestamp_is_frozen():
+    token = TokenTimestamp(text="x", start_s=0.0, end_s=1.0, whitespace="")
+    with pytest.raises(FrozenInstanceError):
+        token.text = "y"  # type: ignore[misc]
+
+
+def test_token_timestamp_equality():
+    a = TokenTimestamp(text="x", start_s=0.0, end_s=1.0, whitespace=" ")
+    b = TokenTimestamp(text="x", start_s=0.0, end_s=1.0, whitespace=" ")
+    c = TokenTimestamp(text="x", start_s=0.0, end_s=1.5, whitespace=" ")
+    assert a == b
+    assert a != c
 
 
 def test_validate_lexicon_rejects_out_of_inventory(tmp_path: Path):

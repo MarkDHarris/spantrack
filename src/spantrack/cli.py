@@ -119,6 +119,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the narration set and projections, then exit",
     )
     parser.add_argument(
+        "--oov-report",
+        action="store_true",
+        dest="oov_report",
+        help="List words the TTS lexicon misses, then exit (loads the G2P)",
+    )
+    parser.add_argument(
         "--clean",
         action="store_true",
         help="Discard any existing work directory",
@@ -185,6 +191,7 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
         include_code=args.include_code,
         device=args.device,
         dry_run=args.dry_run,
+        oov_report=args.oov_report,
         clean=args.clean,
         validate=args.validate,
     )

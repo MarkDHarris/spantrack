@@ -68,6 +68,7 @@ class RunConfig:
     include_code: bool
     device: Device
     dry_run: bool
+    oov_report: bool
     clean: bool
     validate: bool
 

@@ -29,6 +29,7 @@ def test_defaults_are_resolved():
     assert config.include_code is False
     assert config.device == "auto"
     assert config.dry_run is False
+    assert config.oov_report is False
     assert config.clean is False
     assert config.validate is False
 
@@ -110,6 +111,10 @@ def test_invalid_arguments_exit_code_2(argv: Sequence[str] | None):
         cli.parse_args(argv)
 
     assert excinfo.value.code == 2
+
+
+def test_oov_report_flag_sets_config():
+    assert cli.parse_args(["book.epub", "--oov-report"]).oov_report is True
 
 
 def test_word_granularity_emits_experimental_warning():

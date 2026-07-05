@@ -1,6 +1,7 @@
 """Human-readable progress reporting to a text stream."""
 
 import sys
+from collections.abc import Sequence
 from typing import TextIO
 
 from spantrack.narration_projection import SelectionProjection
@@ -38,6 +39,17 @@ class ProgressReporter:
             f"~{_format_duration(projection.duration_seconds)} audio, "
             f"~{_format_size(projection.size_bytes)}",
         )
+
+    def oov(self, words: Sequence[str]) -> None:
+        """Print the OOV review list as a curatable lexicon TOML skeleton."""
+        if not words:
+            self.info("no out-of-vocabulary words found")
+            return
+
+        self.info(f"out-of-vocabulary words: {len(words)}")
+        self.info("[words]")
+        for word in words:
+            self.info(f'# {word} = ""')
 
 
 def _format_duration(seconds: float) -> str:

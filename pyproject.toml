@@ -20,7 +20,20 @@ classifiers = [
   "Typing :: Typed",
 ]
 dynamic = ["version"]
-dependencies = ["ftfy==6.3.1", "lxml>=5,<6", "pysbd==0.3.4"]
+dependencies = [
+  # spaCy models are not on PyPI, so misaki's G2P pins en_core_web_sm by wheel URL to
+  # keep it offline (else misaki fires a runtime `spacy.cli.download`). Direct-URL deps
+  # block a PyPI upload.
+  "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  "ftfy==6.3.1",
+  "kokoro==0.9.4",
+  "lxml>=5,<6",
+  "misaki[en]==0.9.4",
+  "numpy>=1.26,<3",
+  "pysbd==0.3.4",
+  "soundfile>=0.12,<1",
+  "torch>=2.6,<3",
+]
 
 [dependency-groups]
 test   = ["pytest>=8,<9", "syntok>=1.4,<2"]
@@ -108,6 +121,13 @@ convention = "google" # enforce Google-style docstring sections
 ]
 "tests/test_text_normalization.py" = [
   "E501", # adversarial-string corpus rows can't wrap without hiding the data
+]
+"src/spantrack/tts/kokoro_backend.py" = [
+  "PLC0415", # the kokoro import is deliberately lazy - it pulls torch, so importing this
+  #            module (e.g. from the pipeline) must stay cheap for CLI startup
+]
+"src/spantrack/oov_report.py" = [
+  "PLC0415", # the misaki import is lazy - it pulls spacy, so keep this module cheap to import
 ]
 
 [tool.pyright]
