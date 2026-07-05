@@ -25,5 +25,10 @@ def replace(path: Path, write: Callable[[Path], object]) -> None:
             format from the `.tmp` suffix must name it explicitly.
     """
     tmp = path.with_name(f"{path.name}.tmp")
-    write(tmp)
-    tmp.replace(path)
+    try:
+        write(tmp)
+        tmp.replace(path)
+    finally:
+        # A failed producer (or replace) must not leave a stale temp beside real files;
+        # on the success path the replace already renamed it away, so this is a no-op.
+        tmp.unlink(missing_ok=True)

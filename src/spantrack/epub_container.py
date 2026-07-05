@@ -4,7 +4,7 @@ import posixpath
 import shutil
 import zipfile
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 MIMETYPE_NAME = "mimetype"
 
@@ -97,7 +97,17 @@ def _ordered_members(source_dir: Path, order: Sequence[str] | None) -> list[str]
 
 def _safe_destination(dest_dir: Path, member_name: str) -> Path:
     normalized = posixpath.normpath(member_name)
-    if normalized.startswith(("/", "../")) or normalized == "..":
+    # An OCF member is a pure relative POSIX path. Reject anything that could escape the
+    # extraction dir: a parent ref or absolute path, a backslash (a Windows separator
+    # posixpath ignores), or a drive letter (posixpath leaves the drive intact but
+    # Path.joinpath honors it, landing outside dest_dir). The stdlib ZipFile.extract
+    # strips these; this custom extraction must guard them itself.
+    if (
+        "\\" in member_name
+        or PureWindowsPath(normalized).drive
+        or normalized.startswith(("/", "../"))
+        or normalized == ".."
+    ):
         err_msg = f"unsafe archive member path: {member_name!r}"
         raise ValueError(err_msg)
 

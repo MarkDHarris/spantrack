@@ -57,3 +57,18 @@ def test_a_failing_producer_leaves_the_original_intact(tmp_path: Path):
         atomic_write.replace(target, boom)
 
     assert target.read_text() == "original"
+
+
+def test_a_failing_producer_leaves_no_temp_file(tmp_path: Path):
+    target = tmp_path / "out.json"
+
+    def boom(tmp: Path) -> None:
+        tmp.write_text("partial")
+
+        msg = "producer failed"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="producer failed"):
+        atomic_write.replace(target, boom)
+
+    assert list(tmp_path.iterdir()) == []  # no stale .tmp sibling

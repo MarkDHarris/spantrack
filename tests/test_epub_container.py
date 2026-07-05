@@ -37,10 +37,19 @@ def test_unzip_returns_member_names_mimetype_first(
     assert "OEBPS/content.opf" in names
 
 
-def test_unzip_rejects_path_traversal(tmp_path: Path):
+@pytest.mark.parametrize(
+    "member",
+    [
+        "../escape.txt",
+        "/etc/passwd",
+        "d:/evil.txt",  # drive letter: posixpath ignores it, Path.joinpath honors it
+        "C:/evil.txt",
+    ],
+)
+def test_unzip_rejects_unsafe_member_paths(tmp_path: Path, member: str):
     evil = tmp_path / "evil.epub"
     with zipfile.ZipFile(evil, "w") as zf:
-        zf.writestr("../escape.txt", "gotcha")
+        zf.writestr(member, "gotcha")
 
     with pytest.raises(ValueError, match="unsafe archive member path"):
         epub_container.unzip(evil, tmp_path / "book")

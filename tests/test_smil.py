@@ -72,3 +72,9 @@ def test_clock_value_formats_full_clock():
     assert clock_value(0.0) == "0:00:00.000"
     assert clock_value(1.25) == "0:00:01.250"
     assert clock_value(3661.5) == "1:01:01.500"
+
+
+def test_clock_value_carries_at_minute_boundary():
+    # A bound just under a minute must not render an invalid `:60` seconds field: the ms
+    # rounding has to carry into the minutes. 1_439_999/24000s rounds up to 60.000s.
+    assert clock_value(1_439_999 / 24000) == "0:01:00.000"
