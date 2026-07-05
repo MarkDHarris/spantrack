@@ -22,14 +22,18 @@ from spantrack.audio_assembly import BreakAfter
 from spantrack.lxml_reading import XHTML_NS, XmlElement, qname
 from spantrack.pysbd_segmentation import split_sentences
 from spantrack.text_normalization import collapse_whitespace
+from spantrack.word_alignment import segment_words
 
 __all__ = [
     "BlockText",
     "InjectedSpan",
+    "InjectedWord",
     "TextPiece",
+    "WordSentence",
     "extract_block_text",
     "inject",
     "inject_block",
+    "inject_words",
     "narratable_blocks",
 ]
 
@@ -472,3 +476,129 @@ class _Emitter:
     def element(self, element: XmlElement) -> None:
         self._parent.append(element)
         self._last = element
+
+
+@dataclass(frozen=True, slots=True)
+class InjectedWord:
+    """One injected word span: its id, display text, and range in the sentence text.
+
+    `start`/`end` index into the owning `WordSentence.display_text`, so they are exactly
+    the `source_range` a token mapped to this word reports.
+    """
+
+    span_id: str
+    display_text: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class WordSentence:
+    """One sentence's word spans and the sentence-level break that follows it.
+
+    Word mode keeps the sentence as the synthesis/assembly unit (so `break_after` still
+    drives the inter-sentence gap) while each source word gets its own `<span>` for
+    highlighting. `span_id` is the sentence base id `sNNNNN`; word ids are `sNNNNN-wK`.
+    Words inside a single inline element are wrapped together as one unit -- they cannot
+    be split without breaking the element, an experimental-mode limitation.
+    """
+
+    span_id: str
+    display_text: str
+    break_after: BreakAfter
+    words: tuple[InjectedWord, ...]
+
+
+def inject_words(root: XmlElement) -> list[WordSentence]:
+    """Inject word-level spans across a content document, in document order.
+
+    Like `inject`, but wraps each source word in its own `<span id="sNNNNN-wK">` (K the
+    word index within sentence `sNNNNN`) for word-granularity highlighting. The sentence
+    stays the synthesis unit and carries the `break_after`. Mutates the tree in place.
+    """
+    used = _document_ids(root)
+    counter = count(1)
+    injected: list[WordSentence] = []
+    for block in narratable_blocks(root):
+        block_break = (
+            BreakAfter.HEADING if block.tag in _HEADING_TAGS else BreakAfter.PARAGRAPH
+        )
+        injected.extend(_inject_block_words(block, counter, used, block_break))
+
+    return injected
+
+
+def _reserve_base(counter: Iterator[int], used: set[str], word_count: int) -> str:
+    # Pick the next `sNNNNN` whose whole word-id family `sNNNNN-wK` is free of ids
+    # already in the document -- suffixed word ids would otherwise escape the base
+    # uniqueness check and could duplicate a pre-existing id.
+    while True:
+        base = f"s{next(counter):05d}"
+        family = {base, *(f"{base}-w{index}" for index in range(word_count))}
+        if used.isdisjoint(family):
+            used |= family
+            return base
+
+
+def _inject_block_words(
+    block: XmlElement,
+    counter: Iterator[int],
+    used: set[str],
+    block_break: BreakAfter,
+) -> list[WordSentence]:
+    raw_text = extract_block_text(block).text
+    sentence_ranges = split_sentences(raw_text)
+    if not sentence_ranges:
+        return []
+
+    segments = _segments(block)
+    sentence_units = _merge_units(sentence_ranges, segments)
+
+    all_units: list[tuple[int, int]] = []
+    all_ids: list[str] = []
+    sentences: list[WordSentence] = []
+    for sentence_index, (start, end) in enumerate(sentence_units):
+        display_text = collapse_whitespace(raw_text[start:end])
+        raw_words = [
+            (start + span.start, start + span.end)
+            for span in segment_words(raw_text[start:end])
+        ]
+
+        # Merge words that straddle one inline element into a single wrappable unit,
+        # mirroring how sentences merge across inline boundaries.
+        word_units = _merge_units(raw_words, segments) if raw_words else []
+        base_id = _reserve_base(counter, used, len(word_units))
+
+        words: list[InjectedWord] = []
+        cursor = 0
+        for word_index, (word_start, word_end) in enumerate(word_units):
+            word_display = collapse_whitespace(raw_text[word_start:word_end])
+
+            # Locate the word in the sentence's collapsed text; the cursor keeps a
+            # repeated word landing on its own occurrence.
+            display_start = display_text.index(word_display, cursor)
+            cursor = display_start + len(word_display)
+            word_id = f"{base_id}-w{word_index}"
+            words.append(
+                InjectedWord(
+                    span_id=word_id,
+                    display_text=word_display,
+                    start=display_start,
+                    end=cursor,
+                ),
+            )
+            all_units.append((word_start, word_end))
+            all_ids.append(word_id)
+
+        last = sentence_index == len(sentence_units) - 1
+        sentences.append(
+            WordSentence(
+                span_id=base_id,
+                display_text=display_text,
+                break_after=block_break if last else BreakAfter.SENTENCE,
+                words=tuple(words),
+            ),
+        )
+
+    _rebuild(block, segments, all_units, all_ids)
+    return sentences

@@ -32,6 +32,7 @@ def test_defaults_are_resolved():
     assert config.oov_report is False
     assert config.clean is False
     assert config.validate is False
+    assert config.allow_untimed_fallback is False
 
 
 def test_output_and_work_dir_overrides():
@@ -83,6 +84,7 @@ def test_boolean_flags_set():
             "--dry-run",
             "--clean",
             "--validate",
+            "--allow-untimed-fallback",
         ]
     )
 
@@ -91,6 +93,7 @@ def test_boolean_flags_set():
     assert config.dry_run
     assert config.clean
     assert config.validate
+    assert config.allow_untimed_fallback
 
 
 @pytest.mark.parametrize(
@@ -122,3 +125,12 @@ def test_word_granularity_emits_experimental_warning():
         config = cli.parse_args(["book.epub", "--granularity", "word"])
 
     assert config.granularity == "word"
+
+
+def test_allow_untimed_fallback_pairs_with_word_granularity():
+    with pytest.warns(UserWarning, match="experimental"):
+        config = cli.parse_args(
+            ["book.epub", "--granularity", "word", "--allow-untimed-fallback"],
+        )
+
+    assert config.allow_untimed_fallback is True

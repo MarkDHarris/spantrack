@@ -35,11 +35,12 @@ from spantrack import (
     smil,
     synthesis,
     text_normalization,
+    word_alignment,
 )
 from spantrack.lexicon import Lexicon
 from spantrack.lxml_reading import XmlElement
 from spantrack.progress import ProgressReporter
-from spantrack.run_config import Language, RunConfig, parse_bitrate
+from spantrack.run_config import Granularity, Language, RunConfig, parse_bitrate
 from spantrack.sentence_cache import SentenceCache
 from spantrack.tts import kokoro_backend
 from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
@@ -90,6 +91,8 @@ class NarrationContext:
     lexicon: Lexicon | None
     spantrack_version: str
     bitrate: int
+    granularity: Granularity = Granularity.SENTENCE
+    allow_untimed_fallback: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +259,8 @@ def _narrate_and_package(
         lexicon=_load_lexicon(config, backend),
         spantrack_version=_spantrack_version(),
         bitrate=parse_bitrate(config.bitrate),
+        granularity=config.granularity,
+        allow_untimed_fallback=config.allow_untimed_fallback,
     )
 
     overlays: list[opf.ChapterOverlay] = []
@@ -284,18 +289,8 @@ def _narrate_chapter(
     paths = _chapter_paths(layout, document)
     root = lxml_reading.parse_xml_file(layout.book_dir / document.href)
 
-    reusable = (
-        state.is_done(document.href)
-        and paths.audio_path.is_file()
-        and paths.smil_path.is_file()
-        and paths.sidecar_path.is_file()
-    )
-    if reusable:
-        # Resume: the mp3/SMIL persist; re-inject spans (deterministic ids match the
-        # persisted SMIL) into the freshly-unpacked content doc and reuse the duration.
-        sentence_spans.inject(root)
-        duration_s = chapter_sidecar.read(paths.sidecar_path).audio.duration_s
-    else:
+    duration_s = _reuse_duration(state, paths, document)
+    if duration_s is None:
         result = narrate_document(
             context,
             root,
@@ -312,6 +307,10 @@ def _narrate_chapter(
 
         duration_s = result.duration_s
         state.mark_done(document.href)
+    else:
+        # Resume: the mp3/SMIL persist; re-inject spans (their deterministic ids match
+        # the persisted SMIL) into the freshly-unpacked content doc.
+        _inject_spans(context.granularity, root)
 
     highlight_css.link_into_head(root, paths.css_href_rel_doc)
     _write_content(root, layout.book_dir / document.href)
@@ -366,8 +365,12 @@ def narrate_document(
     Injects sentence spans into `root` (mutating it in place), synthesizes each sentence
     through the cache, assembles and encodes the chapter mp3, then writes the SMIL
     overlay and the token-timestamp sidecar. A document with no narratable sentence
-    writes nothing and reports a zero-length result.
+    writes nothing and reports a zero-length result. In word granularity each source
+    word is wrapped and highlighted, while the sentence stays the synthesis unit.
     """
+    if context.granularity is Granularity.WORD:
+        return _narrate_words(context, root, targets)
+
     spans = sentence_spans.inject(root)
     if not spans:
         return NarrationResult(duration_s=0.0, sentence_count=0)
@@ -411,11 +414,20 @@ def narrate_document(
     return NarrationResult(duration_s=chapter.duration_s, sentence_count=len(spans))
 
 
-def _synthesize_span(
-    context: NarrationContext,
-    span: sentence_spans.InjectedSpan,
-) -> _Synthesized:
-    normalized = text_normalization.normalize(span.display_text)
+class UntimedNarrationError(RuntimeError):
+    """Raised when word mode meets a sentence the backend gave no timestamps for."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Synthesis:
+    normalized_text: str
+    cache_key: str
+    pcm: Pcm
+    tokens: tuple[TokenTimestamp, ...] | None
+
+
+def _synthesize_text(context: NarrationContext, display_text: str) -> _Synthesis:
+    normalized = text_normalization.normalize(display_text)
     synth_text = (
         context.backend.apply_lexicon(normalized, context.lexicon)
         if context.lexicon is not None
@@ -433,13 +445,174 @@ def _synthesize_span(
         synth_text,
     )
 
-    return _Synthesized(
-        span=span,
+    return _Synthesis(
         normalized_text=normalized,
         cache_key=cache_key,
         pcm=pcm,
         tokens=tokens,
     )
+
+
+def _synthesize_span(
+    context: NarrationContext,
+    span: sentence_spans.InjectedSpan,
+) -> _Synthesized:
+    synth = _synthesize_text(context, span.display_text)
+    return _Synthesized(
+        span=span,
+        normalized_text=synth.normalized_text,
+        cache_key=synth.cache_key,
+        pcm=synth.pcm,
+        tokens=synth.tokens,
+    )
+
+
+def _narrate_words(
+    context: NarrationContext,
+    root: XmlElement,
+    targets: DocumentTargets,
+) -> NarrationResult:
+    sentences = sentence_spans.inject_words(root)
+    if not sentences or not any(sentence.words for sentence in sentences):
+        # A chapter with no source words (e.g. a "* * *" divider page) is not narrated.
+        return NarrationResult(duration_s=0.0, sentence_count=0)
+
+    synthesized = [_synthesize_text(context, s.display_text) for s in sentences]
+    chapter = audio_assembly.assemble(
+        [
+            (synth.pcm, sentence.break_after)
+            for sentence, synth in zip(sentences, synthesized, strict=True)
+        ],
+    )
+
+    sidecar_sentences: list[chapter_sidecar.SidecarSentence] = []
+    smil_sentences: list[smil.SmilSentence] = []
+    for sentence, synth, clip in zip(
+        sentences, synthesized, chapter.clips, strict=True
+    ):
+        tokens = _shift_tokens(synth.tokens, clip.clip_begin_s)
+        pars, source_ranges = _word_pars(context, sentence, tokens, clip)
+        smil_sentences.extend(pars)
+        sidecar_sentences.append(
+            chapter_sidecar.SidecarSentence(
+                span_id=sentence.span_id,
+                clip_begin_s=clip.clip_begin_s,
+                clip_end_s=clip.clip_end_s,
+                display_text=sentence.display_text,
+                normalized_text=synth.normalized_text,
+                cache_key=synth.cache_key,
+                tokens=tokens,
+                source_ranges=source_ranges,
+            ),
+        )
+
+    if not smil_sentences:
+        # Every word was silent or sub-millisecond, so nothing is highlightable. Skip
+        # the chapter like a non-narrated document; encoding is below this guard, so no
+        # unreferenced audio is written or orphaned.
+        return NarrationResult(duration_s=0.0, sentence_count=0)
+
+    for output in (targets.audio_path, targets.smil_path, targets.sidecar_path):
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+    audio_assembly.encode_chapter(
+        chapter.pcm, targets.audio_path, bitrate=context.bitrate
+    )
+    _write_sidecar(context, targets, chapter.duration_s, sidecar_sentences)
+    targets.smil_path.write_bytes(
+        smil.build_smil(
+            targets.doc_href,
+            targets.audio_href,
+            smil_sentences,
+        ),
+    )
+
+    return NarrationResult(duration_s=chapter.duration_s, sentence_count=len(sentences))
+
+
+def _has_duration(clip_begin_s: float, clip_end_s: float) -> bool:
+    # Non-empty only once serialized to the millisecond clock -- a sub-millisecond clip
+    # rounds to clipBegin == clipEnd, which epubcheck (MED-009) rejects.
+    return smil.clock_value(clip_begin_s) != smil.clock_value(clip_end_s)
+
+
+def _word_pars(
+    context: NarrationContext,
+    sentence: sentence_spans.WordSentence,
+    tokens: tuple[TokenTimestamp, ...] | None,
+    clip: audio_assembly.ClipInterval,
+) -> tuple[list[smil.SmilSentence], tuple[tuple[int, int] | None, ...] | None]:
+    if tokens is None:
+        # The backend emits no timestamps at all: fail loud, or fall back if allowed.
+        return _untimed_pars(context, sentence, clip), None
+
+    if not tokens:
+        # This sentence trimmed to silence (an empty token tuple): nothing to highlight.
+        return [], None
+
+    word_spans = [
+        word_alignment.WordSpan(word.display_text, word.start, word.end)
+        for word in sentence.words
+    ]
+    aligned = word_alignment.align(word_spans, tokens)
+    # Drop a clip with no serialized duration: a word the backend never voiced has no
+    # audio to highlight, and the span simply stays unreferenced by any <par>.
+    pars = [
+        smil.SmilSentence(word.span_id, wordclip.clip_begin_s, wordclip.clip_end_s)
+        for word, wordclip in zip(sentence.words, aligned.words, strict=True)
+        if _has_duration(wordclip.clip_begin_s, wordclip.clip_end_s)
+    ]
+
+    return pars, aligned.source_ranges
+
+
+def _untimed_pars(
+    context: NarrationContext,
+    sentence: sentence_spans.WordSentence,
+    clip: audio_assembly.ClipInterval,
+) -> list[smil.SmilSentence]:
+    if not context.allow_untimed_fallback:
+        msg = (
+            "word mode needs per-token timestamps, but the backend produced none for "
+            f"{sentence.span_id!r}; pass --allow-untimed-fallback to highlight it whole"
+        )
+        raise UntimedNarrationError(msg)
+
+    if not sentence.words or not _has_duration(clip.clip_begin_s, clip.clip_end_s):
+        return []
+
+    # Fall back to a single sentence-length highlight on the sentence's first word span.
+    first = sentence.words[0].span_id
+    return [smil.SmilSentence(first, clip.clip_begin_s, clip.clip_end_s)]
+
+
+def _reuse_duration(
+    state: build_state.BuildState,
+    paths: _ChapterPaths,
+    document: narration_set.Document,
+) -> float | None:
+    # Reusable only when checkpointed, all three artifacts persist, and the sidecar
+    # still parses -- a stale/incompatible sidecar re-narrates rather than crashing.
+    persisted = (
+        state.is_done(document.href)
+        and paths.audio_path.is_file()
+        and paths.smil_path.is_file()
+        and paths.sidecar_path.is_file()
+    )
+    if not persisted:
+        return None
+
+    try:
+        return chapter_sidecar.read(paths.sidecar_path).audio.duration_s
+    except chapter_sidecar.SidecarError:
+        return None
+
+
+def _inject_spans(granularity: Granularity, root: XmlElement) -> None:
+    if granularity is Granularity.WORD:
+        sentence_spans.inject_words(root)
+    else:
+        sentence_spans.inject(root)
 
 
 def _write_sidecar(

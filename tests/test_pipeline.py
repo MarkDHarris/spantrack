@@ -7,7 +7,14 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from spantrack import cli, epub_container, narration_projection, narration_set, pipeline
+from spantrack import (
+    cli,
+    epub_container,
+    narration_projection,
+    narration_set,
+    pipeline,
+    smil,
+)
 from spantrack.content_namespace import ContentNamespaceError
 from spantrack.epubcheck import EpubcheckResult
 from spantrack.lexicon import Lexicon
@@ -46,7 +53,7 @@ def _config(epub: Path, tmp_path: Path, *extra: str) -> RunConfig:
 
 
 class _StubBackend:
-    """A weightless backend returning a 0.2s tone + one token per sentence."""
+    """A weightless backend: a 0.2s tone + one evenly-timed token per source word."""
 
     name = "stub"
     model_version = "stub@1"
@@ -64,10 +71,29 @@ class _StubBackend:
         self,
         text: str,
     ) -> tuple[NDArray[np.float32], tuple[TokenTimestamp, ...] | None]:
-        word = words[0] if (words := text.split()) else text
         pcm = np.full(4_800, 0.3, dtype=np.float32)  # 0.2s at 24 kHz, all voiced
+        words = text.split()
+        if not words:
+            return pcm, (TokenTimestamp(text, 0.0, 0.2, ""),)
 
-        return pcm, (TokenTimestamp(word, 0.0, 0.2, ""),)
+        step = 0.2 / len(words)
+        tokens = tuple(
+            TokenTimestamp(word, index * step, (index + 1) * step, " ")
+            for index, word in enumerate(words)
+        )
+
+        return pcm, tokens
+
+
+class _UntimedStub(_StubBackend):
+    """A backend that emits audio but no per-token timestamps."""
+
+    def synthesize(
+        self,
+        text: str,
+    ) -> tuple[NDArray[np.float32], tuple[TokenTimestamp, ...] | None]:
+        _ = text
+        return np.full(4_800, 0.3, dtype=np.float32), None
 
 
 @pytest.fixture
@@ -104,6 +130,92 @@ def test_run_produces_narrated_output(
     opf_files = list(result.rglob("*.opf"))
     assert opf_files
     assert "media-overlay" in opf_files[0].read_text(encoding="utf-8")
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.usefixtures("stub_synthesis")
+def test_word_granularity_wraps_words_and_references_them_in_smil(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+):
+    config = _config(minimal_epub_path, tmp_path, "--granularity", "word")
+
+    assert pipeline.run(config) == 0
+
+    result = tmp_path / "result"
+    epub_container.unzip(config.output, result)
+
+    docs = [path.read_text(encoding="utf-8") for path in result.rglob("*.xhtml")]
+    assert any('-w0"' in doc for doc in docs)  # word spans were injected
+
+    smil_text = next(result.rglob("*.smil")).read_text(encoding="utf-8")
+    assert "-w0" in smil_text  # a <par> points at a word span, not a sentence span
+    assert "media-overlay" in next(result.rglob("*.opf")).read_text(encoding="utf-8")
+
+
+def _untimed_stub(_config: RunConfig) -> _UntimedStub:
+    return _UntimedStub()
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_word_mode_without_timestamps_fails_loud_by_default(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    monkeypatch.setattr(kokoro_backend, "build", _untimed_stub)
+    config = _config(minimal_epub_path, tmp_path, "--granularity", "word")
+
+    with pytest.raises(pipeline.UntimedNarrationError):
+        pipeline.run(config)
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_word_mode_without_timestamps_falls_back_with_flag(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    monkeypatch.setattr(kokoro_backend, "build", _untimed_stub)
+    config = _config(
+        minimal_epub_path,
+        tmp_path,
+        "--granularity",
+        "word",
+        "--allow-untimed-fallback",
+    )
+
+    assert pipeline.run(config) == 0
+
+    result = tmp_path / "result"
+    epub_container.unzip(config.output, result)
+    smil_text = next(result.rglob("*.smil")).read_text(encoding="utf-8")
+    # The fallback still emits a <par>, pointed at the sentence's first word span.
+    assert "-w0" in smil_text
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.usefixtures("stub_synthesis")
+def test_word_mode_resume_reuses_audio_and_smil(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+):
+    config = _config(minimal_epub_path, tmp_path, "--granularity", "word")
+    assert pipeline.run(config) == 0
+
+    book = config.work_dir / "book"
+    book_mp3 = next(book.rglob("*.mp3"))
+    encoded_at = book_mp3.stat().st_mtime_ns
+    smil_first = next(book.rglob("*.smil")).read_bytes()
+
+    assert pipeline.run(config) == 0  # resume
+
+    assert book_mp3.stat().st_mtime_ns == encoded_at  # not re-encoded
+    assert next(book.rglob("*.smil")).read_bytes() == smil_first  # SMIL unchanged
 
 
 def test_dry_run_writes_no_output(minimal_epub_path: Path, tmp_path: Path):
@@ -328,15 +440,18 @@ def test_resume_reuses_encoded_audio_without_re_encoding(
     assert _first_mp3_bytes(config.output, tmp_path / "r2") == first_output
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 @pytest.mark.skipif(
     shutil.which("ffmpeg") is None
     or not _EPUBCHECK_JAR.is_file()
     or _java_executable() is None,
     reason="acceptance needs ffmpeg + epubcheck jar + java",
 )
+@pytest.mark.parametrize("granularity", ["sentence", "word"])
 @pytest.mark.parametrize("fixture_name", ["minimal_epub_path", "minimal_epub2_path"])
 def test_narrated_output_is_epubcheck_clean(
     fixture_name: str,
+    granularity: str,
     request: pytest.FixtureRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -346,7 +461,8 @@ def test_narrated_output_is_epubcheck_clean(
 
     monkeypatch.setattr(kokoro_backend, "build", _build)
     epub: Path = request.getfixturevalue(fixture_name)
-    config = _config(epub, tmp_path)
+    extra = () if granularity == "sentence" else ("--granularity", "word")
+    config = _config(epub, tmp_path, *extra)
 
     assert pipeline.run(config) == 0
 
@@ -361,3 +477,11 @@ def test_narrated_output_is_epubcheck_clean(
 
     # epubcheck exits 0 only when there are no errors or fatals (warnings are allowed).
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_millisecond_clock_collapses_sub_millisecond_clips():
+    # The word-par filter drops a clip with no duration on the millisecond clock, since
+    # epubcheck (MED-009) rejects clipBegin == clipEnd. Sub-ms bounds collapse to one
+    # clock string; a >= 1 ms difference does not.
+    assert smil.clock_value(0.5) == smil.clock_value(0.5004)
+    assert smil.clock_value(0.5) != smil.clock_value(0.501)

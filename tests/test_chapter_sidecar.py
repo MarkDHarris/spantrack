@@ -43,6 +43,8 @@ def _sidecar() -> ChapterSidecar:
                     TokenTimestamp("me", 0.3, 0.5, " "),
                     TokenTimestamp("Ishmael", 0.5, 1.1, ""),
                 ),
+                # Word-mode: each token's char range back into `display_text`.
+                source_ranges=((0, 4), (5, 7), (8, 15)),
             ),
             SidecarSentence(
                 span_id="s00002",
@@ -66,13 +68,54 @@ def test_round_trip_preserves_the_sidecar(tmp_path: Path):
     assert chapter_sidecar.read(path) == original
 
 
+def test_source_ranges_round_trip(tmp_path: Path):
+    path = tmp_path / "c.tokens.json"
+
+    chapter_sidecar.write(path, _sidecar())
+
+    restored = chapter_sidecar.read(path)
+    assert restored.sentences[0].source_ranges == ((0, 4), (5, 7), (8, 15))
+    # A sentence-mode (or timestamp-less) sentence records no ranges.
+    assert restored.sentences[1].source_ranges is None
+
+
+def test_source_range_none_entry_round_trips(tmp_path: Path):
+    # A token that mapped onto no source word records `null`, which comes back as None.
+    path = tmp_path / "c.tokens.json"
+    sidecar = ChapterSidecar(
+        spantrack_version="0.1.0",
+        backend=BackendIdentity("kokoro", "m@1", "af_heart", 1.0),
+        doc_href="OEBPS/c.xhtml",
+        audio=ChapterAudio(file="audio/c.mp3", sample_rate=SAMPLE_RATE, duration_s=0.5),
+        sentences=(
+            SidecarSentence(
+                span_id="s00001",
+                clip_begin_s=0.0,
+                clip_end_s=0.5,
+                display_text="Hi.",
+                normalized_text="Hi.",
+                cache_key="k",
+                tokens=(
+                    TokenTimestamp("Hi", 0.0, 0.3, ""),
+                    TokenTimestamp(",", 0.3, 0.4, ""),
+                ),
+                source_ranges=((0, 2), None),
+            ),
+        ),
+    )
+
+    chapter_sidecar.write(path, sidecar)
+
+    assert chapter_sidecar.read(path).sentences[0].source_ranges == ((0, 2), None)
+
+
 def test_written_json_carries_schema_version(tmp_path: Path):
     path = tmp_path / "c.tokens.json"
 
     chapter_sidecar.write(path, _sidecar())
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
 
 
 def test_none_tokens_round_trip(tmp_path: Path):
@@ -102,6 +145,16 @@ def test_unknown_schema_version_raises(tmp_path: Path):
         chapter_sidecar.read(path)
 
 
+def test_v1_sidecar_is_rejected(tmp_path: Path):
+    # The v1 shape lacked per-token source ranges; word mode cannot regenerate from it,
+    # so `read` refuses it (the build re-narrates rather than mis-parse the old file).
+    path = tmp_path / "c.tokens.json"
+    path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+
+    with pytest.raises(chapter_sidecar.SidecarError, match="schema_version"):
+        chapter_sidecar.read(path)
+
+
 def test_malformed_json_raises(tmp_path: Path):
     path = tmp_path / "c.tokens.json"
     path.write_text("{ not json", encoding="utf-8")
@@ -112,7 +165,7 @@ def test_malformed_json_raises(tmp_path: Path):
 
 def test_missing_required_key_raises(tmp_path: Path):
     path = tmp_path / "c.tokens.json"
-    path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    path.write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
 
     with pytest.raises(chapter_sidecar.SidecarError):
         chapter_sidecar.read(path)

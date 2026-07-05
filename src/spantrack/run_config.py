@@ -58,6 +58,7 @@ class RunConfig:
     speed: float
     lang: Language
     granularity: Granularity
+    allow_untimed_fallback: bool
     audio_format: AudioFormat
     bitrate: str
     lexicon: Path | None

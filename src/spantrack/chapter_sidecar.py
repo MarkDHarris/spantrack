@@ -5,12 +5,11 @@ sync unit's chapter-absolute clip interval, its display/normalized text, its cac
 and the per-token timeline, so word-level SMIL can be (re)generated later without
 re-synthesizing any audio.
 
-`source_range` (a token's char offsets back into `display_text`) is deliberately NOT
-stored here: deriving it means aligning spoken tokens through normalization expansion
-("1984" -> "nineteen eighty four"), which is `word_alignment.py`'s job in the word-mode
-phase. The persisted token text plus `display_text`/`normalized_text` is sufficient for
-that alignment, so the field joins the schema (a `schema_version` bump) when word mode
-lands.
+Each sentence also records its tokens' `source_ranges`: the char offsets back into
+`display_text` of the source word each token voices, from `word_alignment`. Storing them
+lets word-level SMIL regenerate from the sidecar with no re-synthesis or re-alignment.
+`source_ranges` is `null` in sentence mode; in word mode every entry is a range, or all
+are `null` together for a sentence with tokens but no source words (punctuation only).
 
 Writes go through a temp file + `Path.replace`, and the JSON is built in a fixed key
 order, so an identical sidecar always serializes to identical bytes.
@@ -33,9 +32,9 @@ __all__ = [
     "write",
 ]
 
-# Bumped whenever the on-disk shape changes incompatibly (e.g. when word mode adds each
-# token's `source_range`); `read` refuses any other version rather than mis-parse it.
-_SCHEMA_VERSION = 1
+# Bumped whenever the on-disk shape changes incompatibly. `read` refuses any other
+# version rather than mis-parse it.
+_SCHEMA_VERSION = 2
 
 
 class SidecarError(Exception):
@@ -67,6 +66,11 @@ class SidecarSentence:
 
     `tokens` is None when the backend emitted no timestamps. The token times are
     chapter-absolute (already shifted by `clip_begin_s`), not sentence-relative.
+
+    `source_ranges`, when present, is parallel to `tokens`: entry `i` is the `[start,
+    end)` char range in `display_text` of the source word token `i` voices (word mode).
+    It is None in sentence mode; in word mode every entry is a range, or all are None
+    together for a sentence with tokens but no source words.
     """
 
     span_id: str
@@ -76,6 +80,7 @@ class SidecarSentence:
     normalized_text: str
     cache_key: str
     tokens: tuple[TokenTimestamp, ...] | None
+    source_ranges: tuple[tuple[int, int] | None, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,11 +182,22 @@ def _sentence_to_dict(sentence: SidecarSentence) -> dict[str, object]:
             if sentence.tokens is None
             else [token_to_dict(token) for token in sentence.tokens]
         ),
+        "source_ranges": (
+            None
+            if sentence.source_ranges is None
+            else [None if r is None else [r[0], r[1]] for r in sentence.source_ranges]
+        ),
     }
 
 
 def _sentence_from_dict(row: Any) -> SidecarSentence:  # noqa: ANN401  JSON value is Any
     tokens = row["tokens"]
+    raw_ranges = row.get("source_ranges")
+    source_ranges = (
+        None
+        if raw_ranges is None
+        else tuple(None if r is None else (int(r[0]), int(r[1])) for r in raw_ranges)
+    )
     return SidecarSentence(
         span_id=str(row["span_id"]),
         clip_begin_s=float(row["clip_begin_s"]),
@@ -190,4 +206,5 @@ def _sentence_from_dict(row: Any) -> SidecarSentence:  # noqa: ANN401  JSON valu
         normalized_text=str(row["normalized_text"]),
         cache_key=str(row["cache_key"]),
         tokens=None if tokens is None else tuple(token_from_dict(t) for t in tokens),
+        source_ranges=source_ranges,
     )

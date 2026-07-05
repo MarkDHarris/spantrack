@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from spantrack import chapter_sidecar, pipeline
 from spantrack.lexicon import Lexicon
 from spantrack.lxml_reading import XmlElement, hardened_parser
+from spantrack.run_config import Granularity
 from spantrack.sentence_cache import SentenceCache
 from spantrack.tts.backend import TokenTimestamp
 
@@ -128,3 +129,85 @@ def test_narrate_document_reuses_cached_audio(tmp_path: Path):
     )
 
     assert backend.calls == after_first  # identical text hits the cache
+
+
+class _WordFake(_FakeBackend):
+    """Word-mode fake: a 0.5s tone + one evenly-timed token per source word."""
+
+    def synthesize(
+        self,
+        text: str,
+    ) -> tuple[NDArray[np.float32], tuple[TokenTimestamp, ...] | None]:
+        pcm = np.full(12_000, 0.5, dtype=np.float32)
+        words = text.split() or [text]
+        step = 0.5 / len(words)
+        tokens = tuple(
+            TokenTimestamp(word, index * step, (index + 1) * step, " ")
+            for index, word in enumerate(words)
+        )
+
+        return pcm, tokens
+
+
+class _SilentFake(_FakeBackend):
+    """A fake whose audio is fully silent, so the DSP trims tokens to an empty tuple."""
+
+    def synthesize(
+        self,
+        text: str,
+    ) -> tuple[NDArray[np.float32], tuple[TokenTimestamp, ...] | None]:
+        return np.zeros(12_000, dtype=np.float32), (TokenTimestamp(text, 0.0, 0.5, ""),)
+
+
+def _word_context(backend: _FakeBackend, cache_root: Path) -> pipeline.NarrationContext:
+    return pipeline.NarrationContext(
+        backend=backend,
+        cache=SentenceCache(root=cache_root),
+        lexicon=None,
+        spantrack_version="0.1.0",
+        bitrate=64_000,
+        granularity=Granularity.WORD,
+    )
+
+
+def test_word_mode_writes_word_level_pars(tmp_path: Path):
+    root = _parse("<p>First second. Third fourth.</p>")
+    targets = _targets(tmp_path, "chapter1")
+
+    result = pipeline.narrate_document(
+        _word_context(_WordFake(), tmp_path / "cache"), root, targets
+    )
+
+    assert result.sentence_count == 2
+    assert targets.audio_path.exists()
+
+    smil_text = targets.smil_path.read_text(encoding="utf-8")
+    assert "#s00001-w0" in smil_text
+    assert "#s00001-w1" in smil_text
+
+    sidecar = chapter_sidecar.read(targets.sidecar_path)
+    assert sidecar.sentences[0].source_ranges is not None
+
+
+def test_word_mode_skips_a_wordless_chapter(tmp_path: Path):
+    targets = _targets(tmp_path, "divider")
+
+    result = pipeline.narrate_document(
+        _word_context(_WordFake(), tmp_path / "cache"), _parse("<p>* * *</p>"), targets
+    )
+
+    assert result.sentence_count == 0
+    assert not targets.audio_path.exists()  # nothing encoded, nothing orphaned
+
+
+def test_word_mode_skips_a_silent_chapter_without_crashing(tmp_path: Path):
+    targets = _targets(tmp_path, "silent")
+
+    result = pipeline.narrate_document(
+        _word_context(_SilentFake(), tmp_path / "cache"),
+        _parse("<p>Hello world.</p>"),
+        targets,
+    )
+
+    assert result.sentence_count == 0  # empty-tuple tokens -> no par, chapter skipped
+    assert not targets.audio_path.exists()

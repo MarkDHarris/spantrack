@@ -7,12 +7,13 @@ from lxml import etree
 from segmentation_oracle import syntok_sentence_count
 
 from spantrack.audio_assembly import BreakAfter
-from spantrack.lxml_reading import XmlElement, hardened_parser
+from spantrack.lxml_reading import XHTML_NS, XmlElement, hardened_parser, qname
 from spantrack.sentence_spans import (
     BlockText,
     extract_block_text,
     inject,
     inject_block,
+    inject_words,
     narratable_blocks,
 )
 
@@ -805,3 +806,119 @@ def test_inject_empty_document_returns_no_spans():
     root = _parse("<div>loose text</div><table><tr><td>x. y</td></tr></table>")
 
     assert inject(root) == []
+
+
+def _text(element: XmlElement) -> str:
+    # lxml stubs type itertext() as bytes-or-str; a str-parsed tree only yields str.
+    return "".join(part for part in element.itertext() if isinstance(part, str))
+
+
+def _word_spans(root: XmlElement) -> list[tuple[str, str]]:
+    return [
+        (span.get("id") or "", _text(span))
+        for span in root.iter(qname(XHTML_NS, "span"))
+    ]
+
+
+def test_inject_words_wraps_each_word_in_its_own_span():
+    root = _parse("<p>The cat sat.</p>")
+
+    sentences = inject_words(root)
+    assert len(sentences) == 1
+
+    sentence = sentences[0]
+    assert sentence.span_id == "s00001"
+    assert sentence.break_after == BreakAfter.PARAGRAPH
+    assert [word.display_text for word in sentence.words] == ["The", "cat", "sat"]
+    assert _word_spans(root) == [
+        ("s00001-w0", "The"),
+        ("s00001-w1", "cat"),
+        ("s00001-w2", "sat"),
+    ]
+
+
+def test_word_ranges_index_into_the_sentence_display_text():
+    sentence = inject_words(_parse("<p>The cat sat.</p>"))[0]
+
+    for word in sentence.words:
+        assert sentence.display_text[word.start : word.end] == word.display_text
+
+
+def test_word_ids_and_breaks_are_scoped_per_sentence():
+    sentences = inject_words(_parse("<p>One two. Three four.</p>"))
+
+    assert [sentence.span_id for sentence in sentences] == ["s00001", "s00002"]
+    assert [word.span_id for word in sentences[0].words] == ["s00001-w0", "s00001-w1"]
+    assert [word.span_id for word in sentences[1].words] == ["s00002-w0", "s00002-w1"]
+    assert sentences[0].break_after == BreakAfter.SENTENCE
+    assert sentences[1].break_after == BreakAfter.PARAGRAPH
+
+
+def test_single_word_inline_element_is_wrapped_and_preserved():
+    root = _parse("<p>a <em>big</em> cat</p>")
+
+    sentence = inject_words(root)[0]
+    assert [word.display_text for word in sentence.words] == ["a", "big", "cat"]
+
+    em = next(root.iter(qname(XHTML_NS, "em")))
+    assert _text(em) == "big"
+
+    parent = em.getparent()
+    assert parent is not None
+    assert parent.get("id") == "s00001-w1"  # a span wraps the <em>
+
+
+def test_multi_word_inline_element_merges_into_one_unit():
+    # Experimental limitation: words inside one inline element highlight together.
+    root = _parse("<p><em>big cat</em></p>")
+
+    sentence = inject_words(root)[0]
+
+    assert [word.display_text for word in sentence.words] == ["big cat"]
+    assert [word.span_id for word in sentence.words] == ["s00001-w0"]
+
+
+def test_heading_block_breaks_heading():
+    sentence = inject_words(_parse("<h1>Chapter One</h1>"))[0]
+
+    assert sentence.break_after == BreakAfter.HEADING
+
+
+def test_punctuation_and_whitespace_stay_outside_word_spans():
+    root = _parse("<p>Hello, world!</p>")
+
+    sentence = inject_words(root)[0]
+    block = narratable_blocks(root)[0]
+
+    assert [word.display_text for word in sentence.words] == ["Hello", "world"]
+    # The comma and exclamation are loose text, not swallowed by a span.
+    assert _text(block) == "Hello, world!"
+
+
+def test_inject_words_empty_block_injects_nothing():
+    assert inject_words(_parse("<p>   </p>")) == []
+
+
+def _all_ids(root: XmlElement) -> list[str]:
+    return [value for element in root.iter() if (value := element.get("id"))]
+
+
+def test_word_ids_avoid_a_pre_existing_word_scheme_id():
+    # A source id already shaped like a word id must not be duplicated by injection.
+    root = _parse('<p id="s00001-w0">Hello world.</p>')
+
+    inject_words(root)
+
+    ids = _all_ids(root)
+    assert len(ids) == len(set(ids))  # no duplicate id attributes
+    assert "s00001-w0" in ids  # the pre-existing id is untouched
+
+
+def test_reprocessing_injected_output_keeps_ids_unique():
+    root = _parse("<p>Hello world.</p>")
+
+    inject_words(root)
+    inject_words(root)  # feed spantrack's own word-mode output back in
+
+    ids = _all_ids(root)
+    assert len(ids) == len(set(ids))

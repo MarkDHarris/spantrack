@@ -53,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Highlight granularity (word is experimental)",
     )
     parser.add_argument(
+        "--allow-untimed-fallback",
+        action="store_true",
+        dest="allow_untimed_fallback",
+        help=(
+            "In word mode, fall back to a sentence-level highlight for any sentence "
+            "the backend gives no timestamps (default: fail)"
+        ),
+    )
+    parser.add_argument(
         "--audio-format",
         choices=tuple(AudioFormat),
         type=AudioFormat,
@@ -181,6 +190,7 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
         speed=args.speed,
         lang=args.lang,
         granularity=args.granularity,
+        allow_untimed_fallback=args.allow_untimed_fallback,
         audio_format=args.audio_format,
         bitrate=args.bitrate,
         lexicon=args.lexicon,
