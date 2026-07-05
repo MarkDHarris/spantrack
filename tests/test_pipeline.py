@@ -132,6 +132,18 @@ def test_run_produces_narrated_output(
     assert "media-overlay" in opf_files[0].read_text(encoding="utf-8")
 
 
+@pytest.mark.usefixtures("stub_synthesis")
+def test_progress_bar_run_narrates_end_to_end(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+):
+    # The --progress path drives the tqdm bar through the real narration loop.
+    config = _config(minimal_epub_path, tmp_path, "--progress")
+
+    assert pipeline.run(config) == 0
+    assert config.output.exists()
+
+
 @pytest.mark.filterwarnings("ignore::UserWarning")
 @pytest.mark.usefixtures("stub_synthesis")
 def test_word_granularity_wraps_words_and_references_them_in_smil(

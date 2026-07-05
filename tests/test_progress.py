@@ -8,7 +8,11 @@ from narration_documents import make_document
 
 from spantrack.narration_projection import SelectionProjection
 from spantrack.narration_set import Excluded, Selection
-from spantrack.progress import ProgressReporter
+from spantrack.progress import (
+    ProgressBarUnavailableError,
+    ProgressReporter,
+    ensure_tqdm_available,
+)
 
 
 def _render(action: Callable[[ProgressReporter], None]) -> str:
@@ -91,3 +95,37 @@ def test_oov_lists_words_as_lexicon_skeleton():
     assert "[words]" in out
     assert '# Gandalf = ""' in out
     assert '# Frodo = ""' in out
+
+
+def test_narrating_without_a_bar_prints_a_line_per_chapter():
+    stream = StringIO()
+
+    with ProgressReporter(stream).narrating(2) as chapters:
+        chapters.narrated("OEBPS/chapter1.xhtml")
+        chapters.narrated("OEBPS/chapter2.xhtml")
+
+    out = stream.getvalue()
+    assert "narrated OEBPS/chapter1.xhtml" in out
+    assert "narrated OEBPS/chapter2.xhtml" in out
+
+
+def test_narrating_with_a_bar_renders_a_progress_bar():
+    stream = StringIO()
+
+    with ProgressReporter(stream, progress_bar=True).narrating(2) as chapters:
+        chapters.narrated("a.xhtml")
+        chapters.narrated("b.xhtml")
+
+    out = stream.getvalue()
+    assert "2/2" in out  # tqdm renders the completed/total count
+    assert "narrated a.xhtml" not in out  # the bar replaces the per-chapter lines
+
+
+def test_ensure_tqdm_available_raises_when_absent(monkeypatch: pytest.MonkeyPatch):
+    def no_spec(_name: str) -> None:
+        return None
+
+    monkeypatch.setattr("importlib.util.find_spec", no_spec)
+
+    with pytest.raises(ProgressBarUnavailableError, match="tqdm"):
+        ensure_tqdm_available()

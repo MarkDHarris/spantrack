@@ -35,8 +35,13 @@ dependencies = [
   "torch>=2.6,<3",
 ]
 
+[project.optional-dependencies]
+# Optional per-chapter progress bar, enabled with --progress. Kept out of the base
+# install so the core has no reason to pull tqdm.
+progress = ["tqdm>=4.66,<5"]
+
 [dependency-groups]
-test   = ["pytest>=8,<9", "syntok>=1.4,<2"]
+test   = ["pytest>=8,<9", "syntok>=1.4,<2", "tqdm>=4.66,<5"]
 lint   = ["ruff>=0.6"]
 typing = ["pyright>=1.1", "lxml-stubs>=0.5"]
 

@@ -164,7 +164,7 @@ def run(
     Returns:
         0 on success, nonzero if validation fails.
     """
-    reporter = reporter or ProgressReporter()
+    reporter = reporter or ProgressReporter(progress_bar=config.progress)
 
     if config.clean and config.work_dir.exists():
         shutil.rmtree(config.work_dir)
@@ -255,12 +255,13 @@ def _narrate_and_package(
     )
 
     overlays: list[opf.ChapterOverlay] = []
-    for document in selection.documents:
-        overlay = _narrate_chapter(context, state, layout, document)
-        if overlay is not None:
-            overlays.append(overlay)
-        build_state.save(build_json, state)
-        reporter.info(f"narrated {document.href}")
+    with reporter.narrating(len(selection.documents)) as chapters:
+        for document in selection.documents:
+            overlay = _narrate_chapter(context, state, layout, document)
+            if overlay is not None:
+                overlays.append(overlay)
+            build_state.save(build_json, state)
+            chapters.narrated(document.href)
 
     opf.patch_opf_media_overlays(
         book_dir / package.opf_path,

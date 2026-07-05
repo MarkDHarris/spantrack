@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
-from spantrack import pipeline
+from spantrack import pipeline, progress
 from spantrack.run_config import (
     AudioFormat,
     Device,
@@ -138,6 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run epubcheck on the output",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show a per-chapter progress bar (needs the optional tqdm dependency)",
+    )
 
     return parser
 
@@ -154,13 +159,21 @@ def parse_args(argv: Sequence[str] | None = None) -> RunConfig:
     Raises:
         SystemExit: On invalid arguments (argparse exits with code 2).
     """
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.granularity is Granularity.WORD:
         warnings.warn(
             "word granularity is experimental; A/B a single chapter in Thorium "
             "before committing to a full-book run",
             stacklevel=2,
         )
+    if args.progress:
+        # Fail fast at parse time (exit 2) when the optional bar dep is missing, rather
+        # than deep in the run after unpacking.
+        try:
+            progress.ensure_tqdm_available()
+        except progress.ProgressBarUnavailableError as exc:
+            parser.error(str(exc))
 
     return _to_config(args)
 
@@ -190,6 +203,7 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
         oov_report=args.oov_report,
         clean=args.clean,
         validate=args.validate,
+        progress=args.progress,
     )
 
 

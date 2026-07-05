@@ -70,6 +70,7 @@ class RunConfig:
     oov_report: bool
     clean: bool
     validate: bool
+    progress: bool
 
     @property
     def lang_code(self) -> str:

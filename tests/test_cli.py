@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from spantrack import cli
+from spantrack import cli, progress
 from spantrack.run_config import RunConfig
 
 
@@ -31,6 +31,7 @@ def test_defaults_are_resolved():
     assert config.clean is False
     assert config.validate is False
     assert config.allow_untimed_fallback is False
+    assert config.progress is False
 
 
 def test_output_and_work_dir_overrides():
@@ -128,3 +129,20 @@ def test_allow_untimed_fallback_pairs_with_word_granularity():
         )
 
     assert config.allow_untimed_fallback is True
+
+
+def test_progress_flag_sets_config():
+    assert cli.parse_args(["book.epub", "--progress"]).progress is True
+
+
+def test_progress_without_tqdm_exits_with_a_hint(monkeypatch: pytest.MonkeyPatch):
+    def boom() -> None:
+        raise progress.ProgressBarUnavailableError("tqdm not installed")
+
+    # --progress fails fast at parse time when the optional dependency is missing.
+    # (cli imports this same module object, so patching it here patches cli's view.)
+    monkeypatch.setattr(progress, "ensure_tqdm_available", boom)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.parse_args(["book.epub", "--progress"])
+
+    assert excinfo.value.code == 2

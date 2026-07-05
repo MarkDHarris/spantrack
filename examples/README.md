@@ -29,7 +29,7 @@ spantrack examples/the-clockmakers-apprentice.epub --validate
 
 The output defaults to `<stem>.narrated.epub`, and a work directory `<input>.spantrack/` holds the cache, sidecars, and per-chapter checkpoints — so a killed run resumes without re-synthesizing. Both are ignored by git under `examples/`.
 
-Useful flags: `--dry-run` (print the plan, synthesize nothing), `--oov-report` (list words the voice may mispronounce), `--voice af_heart`, `--speed 1.1`, `--granularity word` (experimental), `--include`/`--exclude`/`--pick` (steer the narration set).
+Useful flags: `--dry-run` (print the plan, synthesize nothing), `--oov-report` (list words the voice may mispronounce), `--voice af_heart`, `--speed 1.1`, `--granularity word` (experimental), `--include`/`--exclude`/`--pick` (steer the narration set), `--progress` (a per-chapter progress bar; needs the optional `pip install 'spantrack[progress]'`).
 
 ### the-lighthouse-keeper (EPUB 2)
 
