@@ -18,12 +18,14 @@ from itertools import count, pairwise
 
 from lxml import etree
 
+from spantrack.audio_assembly import BreakAfter
 from spantrack.lxml_reading import XHTML_NS, XmlElement, qname
 from spantrack.pysbd_segmentation import split_sentences
 from spantrack.text_normalization import collapse_whitespace
 
 __all__ = [
     "BlockText",
+    "InjectedSpan",
     "TextPiece",
     "extract_block_text",
     "inject",
@@ -246,27 +248,64 @@ def inject_block(block: XmlElement, id_gen: Iterator[str]) -> list[tuple[str, st
     ]
 
 
-def inject(root: XmlElement) -> dict[str, str]:
+_HEADING_TAGS = frozenset(
+    qname(XHTML_NS, tag) for tag in ("h1", "h2", "h3", "h4", "h5", "h6")
+)
+
+
+@dataclass(frozen=True, slots=True)
+class InjectedSpan:
+    """One injected sentence span with the break that follows it.
+
+    This is the partial `SentenceUnit` (`doc_href`/`normalized_text` are attached
+    downstream): `span_id` addresses the `<span>`, `display_text` is whitespace-
+    collapsed, and `break_after` — `heading` when the span ends a heading block,
+    `paragraph` when it ends any other block, `sentence` for a non-final span within a
+    block — drives the assembler's inter-sentence gap.
+    """
+
+    span_id: str
+    display_text: str
+    break_after: BreakAfter
+
+
+def inject(root: XmlElement) -> list[InjectedSpan]:
     """Inject sentence spans across a whole content document, in document order.
 
-    Walks the document's narratable blocks and wraps each sentence run in a
-    `<span id="sNNNNN">` with an id unique and sequential within the document. Mutates
-    the tree in place.
+    Walks the document's narratable blocks, wraps each sentence run in a
+    `<span id="sNNNNN">` with an id unique and sequential within the document, and
+    classifies each span's following break from its block. Mutates the tree in place.
 
     Args:
         root: The parsed content-document root (e.g. its `<html>` element).
 
     Returns:
-        The injected spans' `{span_id: display_text}`, ordered by document position.
+        The injected spans in document order, each with its display text and
+        `break_after`.
     """
     # Skip any id already used in the document so the injected ids stay unique document-
     # wide (a hard XHTML requirement, and media overlays resolve spans by id).
     id_gen = _fresh_ids(_document_ids(root))
-    emitted: dict[str, str] = {}
+    injected: list[InjectedSpan] = []
     for block in narratable_blocks(root):
-        emitted.update(inject_block(block, id_gen))
+        spans = inject_block(block, id_gen)
+        # Only the block's last span carries the block-level break: a heading closes
+        # with a heading gap, any other block a paragraph gap, interior spans plainly.
+        block_break = (
+            BreakAfter.HEADING if block.tag in _HEADING_TAGS else BreakAfter.PARAGRAPH
+        )
 
-    return emitted
+        for index, (span_id, display_text) in enumerate(spans):
+            last = index == len(spans) - 1
+            injected.append(
+                InjectedSpan(
+                    span_id=span_id,
+                    display_text=display_text,
+                    break_after=block_break if last else BreakAfter.SENTENCE,
+                ),
+            )
+
+    return injected
 
 
 def _document_ids(root: XmlElement) -> set[str]:

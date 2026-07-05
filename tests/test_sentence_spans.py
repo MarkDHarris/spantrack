@@ -6,6 +6,7 @@ import pytest
 from lxml import etree
 from segmentation_oracle import syntok_sentence_count
 
+from spantrack.audio_assembly import BreakAfter
 from spantrack.lxml_reading import XmlElement, hardened_parser
 from spantrack.sentence_spans import (
     BlockText,
@@ -693,16 +694,47 @@ def test_inject_assigns_sequential_document_scoped_ids():
 
     emitted = inject(root)
 
-    assert list(emitted) == ["s00001", "s00002", "s00003"]
+    assert [span.span_id for span in emitted] == ["s00001", "s00002", "s00003"]
 
 
-def test_inject_returns_the_ordered_span_to_display_map():
+def test_inject_returns_ordered_injected_spans():
     root = _parse("<p>One. Two.</p><p>Three.</p>")
 
     emitted = inject(root)
 
-    assert emitted == {"s00001": "One.", "s00002": "Two.", "s00003": "Three."}
-    assert list(emitted) == ["s00001", "s00002", "s00003"]  # document order
+    assert [(span.span_id, span.display_text) for span in emitted] == [
+        ("s00001", "One."),
+        ("s00002", "Two."),
+        ("s00003", "Three."),
+    ]
+
+
+def test_inject_classifies_break_after_by_block_structure():
+    root = _parse(
+        "<h1>Title here.</h1><p>First. Second.</p><ul><li>Item one.</li></ul>"
+    )
+
+    emitted = inject(root)
+
+    # The block-final span carries the block's break (heading/paragraph); an interior
+    # span breaks as a plain sentence.
+    assert [(span.span_id, span.break_after) for span in emitted] == [
+        ("s00001", BreakAfter.HEADING),
+        ("s00002", BreakAfter.SENTENCE),
+        ("s00003", BreakAfter.PARAGRAPH),
+        ("s00004", BreakAfter.PARAGRAPH),
+    ]
+
+
+def test_inject_breaks_heading_only_after_its_last_sentence():
+    root = _parse("<h2>One. Two.</h2>")
+
+    emitted = inject(root)
+
+    assert [span.break_after for span in emitted] == [
+        BreakAfter.SENTENCE,
+        BreakAfter.HEADING,
+    ]
 
 
 def test_inject_skips_non_narratable_containers():
@@ -714,7 +746,7 @@ def test_inject_skips_non_narratable_containers():
 
     emitted = inject(root)
 
-    assert list(emitted.values()) == ["Real prose."]
+    assert [span.display_text for span in emitted] == ["Real prose."]
 
 
 @pytest.mark.parametrize(
@@ -733,7 +765,7 @@ def test_inject_preserves_document_layout_outside_spans(body: str):
 
     emitted = inject(root)
 
-    assert _strip_spans(root, set(emitted)) == before
+    assert _strip_spans(root, {span.span_id for span in emitted}) == before
 
 
 def test_inject_over_a_fiction_document_matches_expected_and_syntok():
@@ -743,7 +775,7 @@ def test_inject_over_a_fiction_document_matches_expected_and_syntok():
 
     # The strong check: exact per-span display texts across the document, in order.
     expected = [sentence for _, sentences in _FICTION for sentence in sentences]
-    assert list(emitted.values()) == expected
+    assert [span.display_text for span in emitted] == expected
     # Coarse independent oracle: on plain prose (no inline merges) syntok agrees.
     assert len(emitted) == sum(syntok_sentence_count(text) for text, _ in _FICTION)
 
@@ -757,7 +789,8 @@ def test_inject_ids_never_collide_with_source_ids():
 
     all_ids = [element.get("id") for element in root.iter() if element.get("id")]
     assert len(all_ids) == len(set(all_ids))  # every id in the document is unique
-    assert "s00001" not in emitted  # the injected ids skipped the taken source id
+    injected_ids = {span.span_id for span in emitted}
+    assert "s00001" not in injected_ids  # the injected ids skipped the taken source id
 
 
 def test_inject_ids_stay_sequential_across_many_blocks():
@@ -765,10 +798,10 @@ def test_inject_ids_stay_sequential_across_many_blocks():
 
     emitted = inject(root)
 
-    assert list(emitted) == [f"s{n:05d}" for n in range(1, 11)]
+    assert [span.span_id for span in emitted] == [f"s{n:05d}" for n in range(1, 11)]
 
 
-def test_inject_empty_document_returns_empty_map():
+def test_inject_empty_document_returns_no_spans():
     root = _parse("<div>loose text</div><table><tr><td>x. y</td></tr></table>")
 
-    assert inject(root) == {}
+    assert inject(root) == []

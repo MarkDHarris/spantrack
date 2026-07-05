@@ -33,6 +33,7 @@ from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
 __all__ = ["KokoroBackend", "KokoroBackendError", "build"]
 
 _REPO_ID = "hexgrad/Kokoro-82M"
+_BACKEND_NAME = "kokoro"
 _WORD = re.compile(r"[A-Za-z]+")
 
 # Busts the sentence cache when the model changes: the pinned HF repo id plus the
@@ -126,6 +127,11 @@ class KokoroBackend:
         self._pipeline = pipeline
         self._voice = voice
         self._speed = speed
+
+    @property
+    def name(self) -> str:
+        """The backend's identifier, recorded in the chapter sidecar."""
+        return _BACKEND_NAME
 
     @property
     def model_version(self) -> str:

@@ -129,6 +129,7 @@ def test_backend_satisfies_tts_protocol():
 
 def test_exposes_cache_identity():
     backend = _backend()
+    assert backend.name == "kokoro"
     assert backend.voice == "af_heart"
     assert backend.speed == 1.0
     assert backend.model_version.startswith("hexgrad/Kokoro-82M@")

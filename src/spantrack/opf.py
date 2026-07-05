@@ -6,7 +6,7 @@ decide what to do. Media-overlay patching extends this module.
 """
 
 import posixpath
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,18 +15,25 @@ from lxml import etree
 from spantrack.lxml_reading import (
     OPF_NS,
     XmlElement,
+    hardened_parser,
     parse_xml_file,
     qname,
     split_fragment,
 )
+from spantrack.smil import clock_value
 
 __all__ = [
+    "MP3_MEDIA_TYPE",
+    "SMIL_MEDIA_TYPE",
     "XHTML_MEDIA_TYPE",
+    "ChapterOverlay",
     "GuideReference",
+    "ManifestEntry",
     "ManifestItem",
     "OpfError",
     "Package",
     "SpineItem",
+    "patch_opf_media_overlays",
     "read_package",
 ]
 
@@ -310,3 +317,124 @@ def _require_within_container(base_dir: str, href: str) -> str:
     fragment = split_fragment(href)[1]
 
     return f"{resolved}#{fragment}" if fragment else resolved
+
+
+MP3_MEDIA_TYPE = "audio/mpeg"
+SMIL_MEDIA_TYPE = "application/smil+xml"
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestEntry:
+    """A manifest `<item>` to add: id, OPF-relative POSIX href, and media type."""
+
+    item_id: str
+    href: str
+    media_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterOverlay:
+    """The media-overlay wiring for one narrated chapter.
+
+    `content_item_id` is the existing XHTML manifest item the overlay attaches to; the
+    audio/smil ids and OPF-relative hrefs name the new manifest items; `duration_s` is
+    the chapter's audio length, summed into the total `media:duration`.
+    """
+
+    content_item_id: str
+    audio_id: str
+    audio_href: str
+    smil_id: str
+    smil_href: str
+    duration_s: float
+
+
+def patch_opf_media_overlays(
+    opf_path: Path,
+    overlays: Sequence[ChapterOverlay],
+    *,
+    stylesheet: ManifestEntry | None = None,
+    narrator: str,
+    active_class: str,
+) -> None:
+    """Wire media overlays into an OPF: manifest items, attrs, and `media:*` metadata.
+
+    For each overlay, registers the audio + SMIL manifest items, sets `media-overlay`
+    on the content item, and adds a per-overlay `media:duration`. Then adds the total
+    `media:duration`, `media:narrator`, `media:active-class`, and the optional highlight
+    stylesheet item. The OPF is rewritten in place.
+
+    Raises:
+        OpfError: When the OPF has no `<manifest>`/`<metadata>`, or an overlay names a
+            content item absent from the manifest.
+    """
+    tree = etree.parse(str(opf_path), hardened_parser())
+    root = tree.getroot()
+
+    manifest = root.find(qname(OPF_NS, "manifest"))
+    metadata = root.find(qname(OPF_NS, "metadata"))
+    if manifest is None or metadata is None:
+        err_msg = "OPF has no <manifest>/<metadata> to wire media overlays into"
+        raise OpfError(err_msg)
+
+    items_by_id = {
+        item.get("id"): item for item in manifest.iterfind(qname(OPF_NS, "item"))
+    }
+
+    total = 0.0
+    for overlay in overlays:
+        content = items_by_id.get(overlay.content_item_id)
+        if content is None:
+            err_msg = (
+                f"no manifest item {overlay.content_item_id!r} for a media overlay"
+            )
+            raise OpfError(err_msg)
+
+        _append_item(manifest, overlay.audio_id, overlay.audio_href, MP3_MEDIA_TYPE)
+        _append_item(manifest, overlay.smil_id, overlay.smil_href, SMIL_MEDIA_TYPE)
+        content.set("media-overlay", overlay.smil_id)
+        _append_meta(
+            metadata,
+            "media:duration",
+            clock_value(overlay.duration_s),
+            refines=f"#{overlay.smil_id}",
+        )
+        total += overlay.duration_s
+
+    if stylesheet is not None:
+        _append_item(
+            manifest, stylesheet.item_id, stylesheet.href, stylesheet.media_type
+        )
+
+    _append_meta(metadata, "media:duration", clock_value(total))
+    _append_meta(metadata, "media:narrator", narrator)
+    _append_meta(metadata, "media:active-class", active_class)
+
+    tree.write(str(opf_path), xml_declaration=True, encoding="utf-8")
+
+
+def _append_item(
+    manifest: XmlElement,
+    item_id: str,
+    href: str,
+    media_type: str,
+) -> None:
+    item = etree.SubElement(manifest, qname(OPF_NS, "item"))
+    item.set("id", item_id)
+    item.set("href", href)
+    item.set("media-type", media_type)
+
+
+def _append_meta(
+    metadata: XmlElement,
+    prop: str,
+    text: str,
+    *,
+    refines: str | None = None,
+) -> None:
+    meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
+    meta.set("property", prop)
+    if refines is not None:
+        meta.set("refines", refines)
+
+    meta.text = text

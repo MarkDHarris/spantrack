@@ -1,15 +1,20 @@
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pytest
-from conftest import TreeReader
+from numpy.typing import NDArray
 
 from spantrack import cli, epub_container, narration_projection, narration_set, pipeline
 from spantrack.content_namespace import ContentNamespaceError
 from spantrack.epubcheck import EpubcheckResult
+from spantrack.lexicon import Lexicon
 from spantrack.progress import ProgressReporter
 from spantrack.run_config import RunConfig
+from spantrack.tts import kokoro_backend
+from spantrack.tts.backend import TokenTimestamp
 
 
 class _RecordingReporter(ProgressReporter):
@@ -40,10 +45,47 @@ def _config(epub: Path, tmp_path: Path, *extra: str) -> RunConfig:
     )
 
 
-def test_run_produces_round_trippable_output(
+class _StubBackend:
+    """A weightless backend returning a 0.2s tone + one token per sentence."""
+
+    name = "stub"
+    model_version = "stub@1"
+    voice = "af_heart"
+    speed = 1.0
+
+    def validate_lexicon(self, lexicon: Lexicon) -> None:
+        _ = lexicon
+
+    def apply_lexicon(self, text: str, lexicon: Lexicon) -> str:
+        _ = lexicon
+        return text
+
+    def synthesize(
+        self,
+        text: str,
+    ) -> tuple[NDArray[np.float32], tuple[TokenTimestamp, ...] | None]:
+        word = words[0] if (words := text.split()) else text
+        pcm = np.full(4_800, 0.3, dtype=np.float32)  # 0.2s at 24 kHz, all voiced
+
+        return pcm, (TokenTimestamp(word, 0.0, 0.2, ""),)
+
+
+@pytest.fixture
+def stub_synthesis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the real Kokoro build with a weightless stub; skip without ffmpeg."""
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+
+    def _build(_config: RunConfig) -> _StubBackend:
+        return _StubBackend()
+
+    monkeypatch.setattr(kokoro_backend, "build", _build)
+
+
+@pytest.mark.usefixtures("stub_synthesis")
+def test_run_produces_narrated_output(
     minimal_epub_path: Path,
     tmp_path: Path,
-    read_file_tree: TreeReader,
 ):
     config = _config(minimal_epub_path, tmp_path)
     code = pipeline.run(config)
@@ -51,13 +93,17 @@ def test_run_produces_round_trippable_output(
     assert code == 0
     assert config.output.exists()
 
-    source = tmp_path / "source"
     result = tmp_path / "result"
-
-    epub_container.unzip(minimal_epub_path, source)
     epub_container.unzip(config.output, result)
+    # The narrated output carries a chapter mp3, a SMIL overlay, the highlight CSS, and
+    # the media-overlay wiring in the OPF.
+    assert list(result.rglob("*.mp3"))
+    assert list(result.rglob("*.smil"))
+    assert list(result.rglob("highlight.css"))
 
-    assert read_file_tree(result) == read_file_tree(source)
+    opf_files = list(result.rglob("*.opf"))
+    assert opf_files
+    assert "media-overlay" in opf_files[0].read_text(encoding="utf-8")
 
 
 def test_dry_run_writes_no_output(minimal_epub_path: Path, tmp_path: Path):
@@ -102,6 +148,7 @@ def test_pick_override_limits_narration_set(
     ]
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_epub2_output_is_upgraded_to_epub3(minimal_epub2_path: Path, tmp_path: Path):
     config = _config(minimal_epub2_path, tmp_path)
     assert pipeline.run(config) == 0
@@ -139,6 +186,7 @@ def test_oov_report_lists_missing_words_and_writes_no_output(
     assert "vocabulary" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_clean_rebuilds_work_dir(minimal_epub_path: Path, tmp_path: Path):
     work = tmp_path / "work"
     work.mkdir()
@@ -153,6 +201,7 @@ def test_clean_rebuilds_work_dir(minimal_epub_path: Path, tmp_path: Path):
     assert config.output.exists()
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_validate_pass_returns_zero(minimal_epub_path: Path, tmp_path: Path):
     config = _config(minimal_epub_path, tmp_path, "--validate")
     code = pipeline.run(
@@ -163,6 +212,7 @@ def test_validate_pass_returns_zero(minimal_epub_path: Path, tmp_path: Path):
     assert code == 0
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_validate_failure_returns_nonzero(minimal_epub_path: Path, tmp_path: Path):
     config = _config(minimal_epub_path, tmp_path, "--validate")
     code = pipeline.run(
@@ -177,6 +227,7 @@ def test_validate_failure_returns_nonzero(minimal_epub_path: Path, tmp_path: Pat
     assert code == 1
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_validate_invoked_with_output_path(minimal_epub_path: Path, tmp_path: Path):
     seen: dict[str, Path] = {}
 
@@ -190,6 +241,7 @@ def test_validate_invoked_with_output_path(minimal_epub_path: Path, tmp_path: Pa
     assert seen["path"] == config.output
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_no_validation_by_default(minimal_epub_path: Path, tmp_path: Path):
     def validator(path: Path) -> EpubcheckResult:  # noqa: ARG001
         raise AssertionError("validator must not run without --validate")
@@ -222,6 +274,7 @@ def test_non_xhtml_content_document_fails_loud(
         pipeline.run(config)
 
 
+@pytest.mark.usefixtures("stub_synthesis")
 def test_main_runs_end_to_end(minimal_epub_path: Path, tmp_path: Path):
     out = tmp_path / "out.epub"
     code = cli.main(
@@ -236,3 +289,75 @@ def test_main_runs_end_to_end(minimal_epub_path: Path, tmp_path: Path):
 
     assert code == 0
     assert out.exists()
+
+
+_EPUBCHECK_JAR = Path(".epubcheck") / "epubcheck.jar"
+_JDK_JAVA = Path(r"C:\Program Files\Java\jdk-26.0.1\bin\java.exe")
+
+
+def _java_executable() -> str | None:
+    found = shutil.which("java")
+    if found is not None:
+        return found
+    return str(_JDK_JAVA) if _JDK_JAVA.is_file() else None
+
+
+def _first_mp3_bytes(epub: Path, dest: Path) -> bytes:
+    epub_container.unzip(epub, dest)
+    return next(dest.rglob("*.mp3")).read_bytes()
+
+
+@pytest.mark.usefixtures("stub_synthesis")
+def test_resume_reuses_encoded_audio_without_re_encoding(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+):
+    config = _config(minimal_epub_path, tmp_path)
+
+    assert pipeline.run(config) == 0
+    book_mp3 = next((config.work_dir / "book").rglob("*.mp3"))
+    encoded_at = book_mp3.stat().st_mtime_ns
+    first_output = _first_mp3_bytes(config.output, tmp_path / "r1")
+
+    build_json = (config.work_dir / "build.json").read_text(encoding="utf-8")
+    assert "chapter1.xhtml" in build_json  # the chapter is checkpointed done
+
+    assert pipeline.run(config) == 0  # resume over the same work dir
+
+    assert book_mp3.stat().st_mtime_ns == encoded_at  # not re-encoded (checkpoint skip)
+    assert _first_mp3_bytes(config.output, tmp_path / "r2") == first_output
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None
+    or not _EPUBCHECK_JAR.is_file()
+    or _java_executable() is None,
+    reason="acceptance needs ffmpeg + epubcheck jar + java",
+)
+@pytest.mark.parametrize("fixture_name", ["minimal_epub_path", "minimal_epub2_path"])
+def test_narrated_output_is_epubcheck_clean(
+    fixture_name: str,
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def _build(_config: RunConfig) -> _StubBackend:
+        return _StubBackend()
+
+    monkeypatch.setattr(kokoro_backend, "build", _build)
+    epub: Path = request.getfixturevalue(fixture_name)
+    config = _config(epub, tmp_path)
+
+    assert pipeline.run(config) == 0
+
+    java = _java_executable()
+    assert java is not None
+    completed = subprocess.run(
+        [java, "-jar", str(_EPUBCHECK_JAR), str(config.output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    # epubcheck exits 0 only when there are no errors or fatals (warnings are allowed).
+    assert completed.returncode == 0, completed.stdout + completed.stderr

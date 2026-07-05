@@ -1,8 +1,44 @@
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 from spantrack import epub_container, opf
+
+_OPF_NS = "http://www.idpf.org/2007/opf"
+_OVERLAY_ITEMS = (
+    '<item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>'
+    '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"'
+    ' properties="nav"/>'
+)
+
+
+def _overlay() -> opf.ChapterOverlay:
+    return opf.ChapterOverlay(
+        content_item_id="ch1",
+        audio_id="ch1-audio",
+        audio_href="audio/chapter1.mp3",
+        smil_id="ch1-smil",
+        smil_href="chapter1.smil",
+        duration_s=12.5,
+    )
+
+
+def _container_with_opf(tmp_path: Path) -> Path:
+    return _write_container(
+        tmp_path / "book",
+        _opf_with_manifest(_OVERLAY_ITEMS, spine='<itemref idref="ch1"/>'),
+        opf_relpath="content.opf",
+    )
+
+
+def _metas(opf_path: Path) -> dict[tuple[str | None, str | None], str | None]:
+    root = etree.parse(str(opf_path)).getroot()
+    return {
+        (meta.get("property"), meta.get("refines")): meta.text
+        for meta in root.iter(f"{{{_OPF_NS}}}meta")
+    }
+
 
 _CONTAINER_TEMPLATE = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -196,3 +232,111 @@ def test_selects_opf_rootfile_by_media_type(tmp_path: Path):
     package = opf.read_package(root)
 
     assert package.opf_path == "OEBPS/content.opf"
+
+
+_NO_METADATA_OPF = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">\n'
+    "  <manifest>"
+    '<item id="ch1" href="c.xhtml" media-type="application/xhtml+xml"/>'
+    "</manifest>\n"
+    '  <spine><itemref idref="ch1"/></spine>\n'
+    "</package>\n"
+)
+
+
+def test_patch_registers_overlay_and_stylesheet_manifest_items(tmp_path: Path):
+    root = _container_with_opf(tmp_path)
+
+    opf.patch_opf_media_overlays(
+        root / "content.opf",
+        [_overlay()],
+        stylesheet=opf.ManifestEntry(
+            "highlight-css", "spantrack/highlight.css", "text/css"
+        ),
+        narrator="Kokoro af_heart",
+        active_class="-spantrack-active",
+    )
+
+    package = opf.read_package(root)
+    audio = package.item_by_id("ch1-audio")
+    smil = package.item_by_id("ch1-smil")
+    css = package.item_by_id("highlight-css")
+    assert audio is not None
+    assert audio.media_type == opf.MP3_MEDIA_TYPE
+    assert audio.href == "audio/chapter1.mp3"
+    assert smil is not None
+    assert smil.media_type == opf.SMIL_MEDIA_TYPE
+    assert css is not None
+    assert css.media_type == "text/css"
+
+
+def test_patch_sets_media_overlay_attr_and_media_metadata(tmp_path: Path):
+    root = _container_with_opf(tmp_path)
+    opf_path = root / "content.opf"
+
+    opf.patch_opf_media_overlays(
+        opf_path,
+        [_overlay()],
+        narrator="Kokoro af_heart",
+        active_class="-spantrack-active",
+    )
+
+    doc = etree.parse(str(opf_path)).getroot()
+    content = next(i for i in doc.iter(f"{{{_OPF_NS}}}item") if i.get("id") == "ch1")
+    assert content.get("media-overlay") == "ch1-smil"
+
+    metas = _metas(opf_path)
+    assert metas[("media:duration", "#ch1-smil")] == "0:00:12.500"
+    assert metas[("media:duration", None)] == "0:00:12.500"  # total (single overlay)
+    assert metas[("media:narrator", None)] == "Kokoro af_heart"
+    assert metas[("media:active-class", None)] == "-spantrack-active"
+
+
+def test_patch_total_duration_sums_all_overlays(tmp_path: Path):
+    items = _OVERLAY_ITEMS + (
+        '<item id="ch2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>'
+    )
+    root = _write_container(
+        tmp_path / "book",
+        _opf_with_manifest(items, spine='<itemref idref="ch1"/><itemref idref="ch2"/>'),
+        opf_relpath="content.opf",
+    )
+    opf_path = root / "content.opf"
+    overlays = [
+        opf.ChapterOverlay("ch1", "a1", "a1.mp3", "s1", "s1.smil", 10.0),
+        opf.ChapterOverlay("ch2", "a2", "a2.mp3", "s2", "s2.smil", 5.5),
+    ]
+
+    opf.patch_opf_media_overlays(
+        opf_path, overlays, narrator="n", active_class="-spantrack-active"
+    )
+
+    assert _metas(opf_path)[("media:duration", None)] == "0:00:15.500"
+
+
+def test_patch_raises_for_unknown_content_item(tmp_path: Path):
+    root = _container_with_opf(tmp_path)
+    unknown = opf.ChapterOverlay("missing", "a", "a.mp3", "s", "s.smil", 1.0)
+
+    with pytest.raises(opf.OpfError, match="missing"):
+        opf.patch_opf_media_overlays(
+            root / "content.opf",
+            [unknown],
+            narrator="n",
+            active_class="-spantrack-active",
+        )
+
+
+def test_patch_raises_when_metadata_missing(tmp_path: Path):
+    root = _write_container(
+        tmp_path / "book", _NO_METADATA_OPF, opf_relpath="content.opf"
+    )
+
+    with pytest.raises(opf.OpfError, match="metadata"):
+        opf.patch_opf_media_overlays(
+            root / "content.opf",
+            [_overlay()],
+            narrator="n",
+            active_class="-spantrack-active",
+        )
