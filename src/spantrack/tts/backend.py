@@ -16,15 +16,23 @@ per-token timestamps; everything downstream (cache, assembly, SMIL) consumes tho
 the torch/misaki types never leak past this module.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
 
 from spantrack.lexicon import Lexicon
 
-__all__ = ["SAMPLE_RATE", "Pcm", "TTSBackend", "TokenTimestamp"]
+__all__ = [
+    "SAMPLE_RATE",
+    "Pcm",
+    "TTSBackend",
+    "TokenTimestamp",
+    "token_from_dict",
+    "token_to_dict",
+]
 
 # The canonical audio form every backend emits and the cache/assembler consume: 24 kHz
 # mono float32 samples in [-1, 1].
@@ -49,6 +57,30 @@ class TokenTimestamp:
     start_s: float
     end_s: float
     whitespace: str
+
+
+def token_to_dict(token: TokenTimestamp) -> dict[str, object]:
+    """Serialize a token to a JSON-compatible dict.
+
+    Single-sources the token's on-disk shape so the sentence cache and the chapter
+    sidecar cannot drift apart.
+    """
+    return {
+        "text": token.text,
+        "start_s": token.start_s,
+        "end_s": token.end_s,
+        "whitespace": token.whitespace,
+    }
+
+
+def token_from_dict(row: Mapping[str, Any]) -> TokenTimestamp:
+    """Reconstruct a token from its `token_to_dict` form."""
+    return TokenTimestamp(
+        text=str(row["text"]),
+        start_s=float(row["start_s"]),
+        end_s=float(row["end_s"]),
+        whitespace=str(row["whitespace"]),
+    )
 
 
 @runtime_checkable

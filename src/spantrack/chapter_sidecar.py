@@ -1,0 +1,193 @@
+"""Versioned per-chapter token-timestamp sidecar: the record word-mode SMIL reads.
+
+One sidecar is written per narrated chapter and always persisted. It captures every
+sync unit's chapter-absolute clip interval, its display/normalized text, its cache key,
+and the per-token timeline, so word-level SMIL can be (re)generated later without
+re-synthesizing any audio.
+
+`source_range` (a token's char offsets back into `display_text`) is deliberately NOT
+stored here: deriving it means aligning spoken tokens through normalization expansion
+("1984" -> "nineteen eighty four"), which is `word_alignment.py`'s job in the word-mode
+phase. The persisted token text plus `display_text`/`normalized_text` is sufficient for
+that alignment, so the field joins the schema (a `schema_version` bump) when word mode
+lands.
+
+Writes go through a temp file + `Path.replace`, and the JSON is built in a fixed key
+order, so an identical sidecar always serializes to identical bytes.
+"""
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, cast
+
+from spantrack.tts.backend import TokenTimestamp, token_from_dict, token_to_dict
+
+__all__ = [
+    "BackendIdentity",
+    "ChapterAudio",
+    "ChapterSidecar",
+    "SidecarError",
+    "SidecarSentence",
+    "read",
+    "write",
+]
+
+# Bumped whenever the on-disk shape changes incompatibly (e.g. when word mode adds each
+# token's `source_range`); `read` refuses any other version rather than mis-parse it.
+_SCHEMA_VERSION = 1
+
+
+class SidecarError(Exception):
+    """Raised when a chapter sidecar is unreadable or of an unsupported schema."""
+
+
+@dataclass(frozen=True, slots=True)
+class BackendIdentity:
+    """The backend parameters behind a chapter's audio; mirror the cache key."""
+
+    name: str
+    model_version: str
+    voice: str
+    speed: float
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterAudio:
+    """The assembled chapter's audio file and its measured timing."""
+
+    file: str
+    sample_rate: int
+    duration_s: float
+
+
+@dataclass(frozen=True, slots=True)
+class SidecarSentence:
+    """One sync unit's entry: its chapter-absolute clip, text, cache key, and tokens.
+
+    `tokens` is None when the backend emitted no timestamps. The token times are
+    chapter-absolute (already shifted by `clip_begin_s`), not sentence-relative.
+    """
+
+    span_id: str
+    clip_begin_s: float
+    clip_end_s: float
+    display_text: str
+    normalized_text: str
+    cache_key: str
+    tokens: tuple[TokenTimestamp, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterSidecar:
+    """A whole chapter's token-timestamp record (one per narrated chapter)."""
+
+    spantrack_version: str
+    backend: BackendIdentity
+    doc_href: str
+    audio: ChapterAudio
+    sentences: tuple[SidecarSentence, ...]
+
+
+def write(path: Path, sidecar: ChapterSidecar) -> None:
+    """Write `sidecar` to `path` as deterministic JSON via an atomic temp + replace."""
+    payload = {
+        "schema_version": _SCHEMA_VERSION,
+        "spantrack_version": sidecar.spantrack_version,
+        "backend": {
+            "name": sidecar.backend.name,
+            "model_version": sidecar.backend.model_version,
+            "voice": sidecar.backend.voice,
+            "speed": sidecar.backend.speed,
+        },
+        "doc_href": sidecar.doc_href,
+        "audio": {
+            "file": sidecar.audio.file,
+            "sample_rate": sidecar.audio.sample_rate,
+            "duration_s": sidecar.audio.duration_s,
+        },
+        "sentences": [_sentence_to_dict(sentence) for sentence in sidecar.sentences],
+    }
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def read(path: Path) -> ChapterSidecar:
+    """Read and validate a chapter sidecar written by `write`.
+
+    Raises:
+        SidecarError: If the file is missing, not valid JSON, of an unsupported
+            `schema_version`, or missing a required field.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        msg = f"unreadable chapter sidecar at {path}"
+        raise SidecarError(msg) from error
+
+    if not isinstance(raw, dict):
+        msg = f"chapter sidecar at {path} is not a JSON object"
+        raise SidecarError(msg)
+
+    data = cast("dict[str, Any]", raw)
+
+    version = data.get("schema_version")
+    if version != _SCHEMA_VERSION:
+        msg = (
+            f"unsupported sidecar schema_version {version!r}; "
+            f"expected {_SCHEMA_VERSION}"
+        )
+        raise SidecarError(msg)
+
+    try:
+        backend = data["backend"]
+        audio = data["audio"]
+        return ChapterSidecar(
+            spantrack_version=str(data["spantrack_version"]),
+            backend=BackendIdentity(
+                name=str(backend["name"]),
+                model_version=str(backend["model_version"]),
+                voice=str(backend["voice"]),
+                speed=float(backend["speed"]),
+            ),
+            doc_href=str(data["doc_href"]),
+            audio=ChapterAudio(
+                file=str(audio["file"]),
+                sample_rate=int(audio["sample_rate"]),
+                duration_s=float(audio["duration_s"]),
+            ),
+            sentences=tuple(_sentence_from_dict(s) for s in data["sentences"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        msg = f"malformed chapter sidecar at {path}"
+        raise SidecarError(msg) from error
+
+
+def _sentence_to_dict(sentence: SidecarSentence) -> dict[str, object]:
+    return {
+        "span_id": sentence.span_id,
+        "clip_begin_s": sentence.clip_begin_s,
+        "clip_end_s": sentence.clip_end_s,
+        "display_text": sentence.display_text,
+        "normalized_text": sentence.normalized_text,
+        "cache_key": sentence.cache_key,
+        "tokens": (
+            None
+            if sentence.tokens is None
+            else [token_to_dict(token) for token in sentence.tokens]
+        ),
+    }
+
+
+def _sentence_from_dict(row: Any) -> SidecarSentence:  # noqa: ANN401  JSON value is Any
+    tokens = row["tokens"]
+    return SidecarSentence(
+        span_id=str(row["span_id"]),
+        clip_begin_s=float(row["clip_begin_s"]),
+        clip_end_s=float(row["clip_end_s"]),
+        display_text=str(row["display_text"]),
+        normalized_text=str(row["normalized_text"]),
+        cache_key=str(row["cache_key"]),
+        tokens=None if tokens is None else tuple(token_from_dict(t) for t in tokens),
+    )

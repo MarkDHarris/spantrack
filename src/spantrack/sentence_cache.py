@@ -16,13 +16,19 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 import numpy as np
 import soundfile  # pyright: ignore[reportMissingTypeStubs]
 from numpy.typing import NDArray
 
-from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
+from spantrack.tts.backend import (
+    SAMPLE_RATE,
+    Pcm,
+    TokenTimestamp,
+    token_from_dict,
+    token_to_dict,
+)
 
 __all__ = ["SentenceCache"]
 
@@ -117,7 +123,7 @@ class SentenceCache:
     def _write_tokens(
         self, path: Path, tokens: tuple[TokenTimestamp, ...] | None
     ) -> None:
-        rows = None if tokens is None else [_token_to_row(token) for token in tokens]
+        rows = None if tokens is None else [token_to_dict(token) for token in tokens]
         tmp = path.with_name(f"{path.name}.tmp")
         tmp.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
@@ -127,22 +133,4 @@ class SentenceCache:
         if raw is None:
             return None
 
-        return tuple(_row_to_token(row) for row in cast("list[dict[str, Any]]", raw))
-
-
-def _token_to_row(token: TokenTimestamp) -> dict[str, object]:
-    return {
-        "text": token.text,
-        "start_s": token.start_s,
-        "end_s": token.end_s,
-        "whitespace": token.whitespace,
-    }
-
-
-def _row_to_token(row: dict[str, Any]) -> TokenTimestamp:
-    return TokenTimestamp(
-        text=str(row["text"]),
-        start_s=float(row["start_s"]),
-        end_s=float(row["end_s"]),
-        whitespace=str(row["whitespace"]),
-    )
+        return tuple(token_from_dict(row) for row in raw)
