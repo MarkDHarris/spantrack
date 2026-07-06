@@ -5,6 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "spantrack"
 description = "Convert text EPUBs into EPUB 3 with Media Overlays via local Kokoro TTS"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -21,10 +22,12 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-  # spaCy models are not on PyPI, so misaki's G2P pins en_core_web_sm by wheel URL to
-  # keep it offline (else misaki fires a runtime `spacy.cli.download`). Direct-URL deps
-  # block a PyPI upload.
-  "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  # misaki's G2P also needs the `en_core_web_sm` spaCy model, which is NOT on PyPI and
+  # cannot be declared here: a PEP 508 direct-URL (`name @ url`) reference blocks the
+  # PyPI upload. Install it explicitly after spantrack (see the README "Install"
+  # section), pinned so G2P stays offline and deterministic -- otherwise misaki fires a
+  # runtime `spacy.cli.download`:
+  #   pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
   "ftfy==6.3.1",
   "kokoro==0.9.4",
   "lxml>=5,<6",
@@ -41,14 +44,16 @@ dependencies = [
 progress = ["tqdm>=4.66,<5"]
 
 [dependency-groups]
-test   = ["pytest>=8,<9", "syntok>=1.4,<2", "tqdm>=4.66,<5"]
-lint   = ["ruff>=0.6"]
-typing = ["pyright>=1.1", "lxml-stubs>=0.5"]
+test    = ["pytest>=8,<9", "syntok>=1.4,<2", "tqdm>=4.66,<5"]
+lint    = ["ruff>=0.6"]
+typing  = ["pyright>=1.1", "lxml-stubs>=0.5"]
+release = ["build>=1,<2", "twine>=5,<7", "hatchling>=1,<2"]
 
 dev = [
   { include-group = "test" },
   { include-group = "lint" },
   { include-group = "typing" },
+  { include-group = "release" },
 ]
 
 [project.urls]
