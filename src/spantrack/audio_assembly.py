@@ -13,8 +13,9 @@ clip boundaries the SMIL stage emits verbatim. Two rules shape it:
    the discontinuity without shifting any timestamp.
 
 The assembled PCM is deterministic given the same sentence PCM (gaps and fades are
-fixed); the MP3 that `encode_chapter` produces is not guaranteed byte-identical across
-ffmpeg versions -- the sentence cache, not the chapter file, is the determinism anchor.
+fixed); the encoded chapter file `encode_chapter` produces (MP3 or Ogg Opus) is not
+guaranteed byte-identical across ffmpeg versions -- the sentence cache, not the chapter
+file, is the determinism anchor.
 """
 
 import enum
@@ -26,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
+from spantrack.run_config import AudioFormat
 from spantrack.tts.backend import SAMPLE_RATE, Pcm
 
 __all__ = [
@@ -33,6 +35,7 @@ __all__ = [
     "BreakAfter",
     "ClipInterval",
     "CompletedCommand",
+    "EncodeSettings",
     "FfmpegEncodeError",
     "FfmpegNotFoundError",
     "assemble",
@@ -160,24 +163,43 @@ class CompletedCommand:
     stderr: str
 
 
+@dataclass(frozen=True, slots=True)
+class EncodeSettings:
+    """How to encode a chapter: the target audio format and its bitrate."""
+
+    audio_format: AudioFormat
+    bitrate: int
+
+
+# ffmpeg audio codec per format; the container (MP3 / Ogg Opus) follows the output file
+# extension the pipeline derives from `AudioFormat`.
+_CODECS: dict[AudioFormat, str] = {
+    AudioFormat.MP3: "libmp3lame",
+    AudioFormat.OPUS: "libopus",
+}
+
+
 def encode_chapter(
     pcm: Pcm,
     out_path: Path,
     *,
-    bitrate: int,
+    settings: EncodeSettings,
     locate: Locator = shutil.which,
     runner: FfmpegRunner | None = None,
 ) -> None:
-    """Encode assembled chapter PCM to a mono MP3 at `out_path` via ffmpeg.
+    """Encode assembled chapter PCM to a mono audio file at `out_path` via ffmpeg.
 
     The float32 PCM is streamed to ffmpeg as raw little-endian `f32le` on stdin, so no
-    intermediate WAV is written. `locate`/`runner` are injected to keep the stage
-    testable without the binary, mirroring the epubcheck gate.
+    intermediate WAV is written. `settings.audio_format` selects the codec (MP3 via
+    `libmp3lame`, Opus via `libopus`); the container follows `out_path`'s extension.
+    `locate`/`runner` are injected to keep the stage testable without the binary,
+    mirroring the epubcheck gate.
 
     Args:
         pcm: The assembled 24 kHz mono float32 chapter waveform.
-        out_path: Destination MP3 path; overwritten if it already exists.
-        bitrate: Target audio bitrate in bits per second (e.g. 64000).
+        out_path: Destination audio path; its extension sets the container (`.mp3` /
+            `.opus`) and is overwritten if it already exists.
+        settings: The target audio format and bitrate (bits per second).
         locate: Resolves the ffmpeg executable to a full path, or None if absent.
         runner: Runs the resolved command with stdin bytes; defaults to a subprocess.
 
@@ -208,9 +230,9 @@ def encode_chapter(
         "-i",
         "-",
         "-c:a",
-        "libmp3lame",
+        _CODECS[settings.audio_format],
         "-b:a",
-        str(bitrate),
+        str(settings.bitrate),
         str(out_path),
     ]
     run = runner if runner is not None else _run_ffmpeg

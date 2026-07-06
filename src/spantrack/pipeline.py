@@ -40,7 +40,13 @@ from spantrack import (
 from spantrack.lexicon import Lexicon
 from spantrack.lxml_reading import XmlElement
 from spantrack.progress import ProgressReporter
-from spantrack.run_config import Granularity, Language, RunConfig, parse_bitrate
+from spantrack.run_config import (
+    AudioFormat,
+    Granularity,
+    Language,
+    RunConfig,
+    parse_bitrate,
+)
 from spantrack.sentence_cache import SentenceCache
 from spantrack.tts import kokoro_backend
 from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
@@ -91,6 +97,7 @@ class NarrationContext:
     lexicon: Lexicon | None
     spantrack_version: str
     bitrate: int
+    audio_format: AudioFormat
     granularity: Granularity = Granularity.SENTENCE
     allow_untimed_fallback: bool = False
 
@@ -250,6 +257,7 @@ def _narrate_and_package(
         lexicon=_load_lexicon(config, backend),
         spantrack_version=_spantrack_version(),
         bitrate=parse_bitrate(config.bitrate),
+        audio_format=config.audio_format,
         granularity=config.granularity,
         allow_untimed_fallback=config.allow_untimed_fallback,
     )
@@ -278,7 +286,7 @@ def _narrate_chapter(
     layout: _BuildLayout,
     document: narration_set.Document,
 ) -> opf.ChapterOverlay | None:
-    paths = _chapter_paths(layout, document)
+    paths = _chapter_paths(layout, document, context.audio_format)
     root = lxml_reading.parse_xml_file(layout.book_dir / document.href)
 
     duration_s = _reuse_duration(state, paths, document)
@@ -311,6 +319,7 @@ def _narrate_chapter(
         content_item_id=document.item_id,
         audio_id=f"{document.item_id}-audio",
         audio_href=paths.audio_opf_href,
+        audio_media_type=context.audio_format.media_type,
         smil_id=f"{document.item_id}-smil",
         smil_href=paths.smil_opf_href,
         duration_s=duration_s,
@@ -320,12 +329,17 @@ def _narrate_chapter(
 def _chapter_paths(
     layout: _BuildLayout,
     document: narration_set.Document,
+    audio_format: AudioFormat,
 ) -> _ChapterPaths:
     doc_dir = posixpath.dirname(document.href)
     stem = posixpath.splitext(posixpath.basename(document.href))[0]
 
     smil_container = posixpath.join(doc_dir, f"{stem}.smil")
-    audio_container = posixpath.join(layout.opf_dir, "audio", f"{stem}.mp3")
+    audio_container = posixpath.join(
+        layout.opf_dir,
+        "audio",
+        f"{stem}.{audio_format.extension}",
+    )
     css_container = posixpath.join(layout.opf_dir, layout.css_opf_href)
 
     doc_base = doc_dir or "."
@@ -462,7 +476,9 @@ def _write_chapter_outputs(
         output.parent.mkdir(parents=True, exist_ok=True)
 
     audio_assembly.encode_chapter(
-        chapter.pcm, targets.audio_path, bitrate=context.bitrate
+        chapter.pcm,
+        targets.audio_path,
+        settings=audio_assembly.EncodeSettings(context.audio_format, context.bitrate),
     )
     _write_sidecar(context, targets, chapter.duration_s, sidecar_sentences)
     targets.smil_path.write_bytes(

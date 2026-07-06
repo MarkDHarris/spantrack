@@ -133,6 +133,25 @@ def test_run_produces_narrated_output(
 
 
 @pytest.mark.usefixtures("stub_synthesis")
+def test_opus_run_writes_opus_audio_referenced_in_smil(
+    minimal_epub_path: Path,
+    tmp_path: Path,
+):
+    config = _config(minimal_epub_path, tmp_path, "--audio-format", "opus")
+
+    assert pipeline.run(config) == 0
+
+    result = tmp_path / "result"
+    epub_container.unzip(config.output, result)
+
+    assert list(result.rglob("*.opus"))  # the chapter audio is Opus
+    assert not list(result.rglob("*.mp3"))  # and no MP3 was written
+
+    smil_text = next(result.rglob("*.smil")).read_text(encoding="utf-8")
+    assert ".opus" in smil_text  # the <audio> src points at the .opus file
+
+
+@pytest.mark.usefixtures("stub_synthesis")
 def test_progress_bar_run_narrates_end_to_end(
     minimal_epub_path: Path,
     tmp_path: Path,
@@ -488,6 +507,47 @@ def test_narrated_output_is_epubcheck_clean(
     )
 
     # epubcheck exits 0 only when there are no errors or fatals (warnings are allowed).
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None
+    or not _EPUBCHECK_JAR.is_file()
+    or _java_executable() is None,
+    reason="acceptance needs ffmpeg + epubcheck jar + java",
+)
+@pytest.mark.parametrize("fixture_name", ["minimal_epub_path", "minimal_epub2_path"])
+def test_opus_output_is_epubcheck_clean(
+    fixture_name: str,
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def _build(_config: RunConfig) -> _StubBackend:
+        return _StubBackend()
+
+    monkeypatch.setattr(kokoro_backend, "build", _build)
+    epub: Path = request.getfixturevalue(fixture_name)
+    config = _config(epub, tmp_path, "--audio-format", "opus")
+
+    assert pipeline.run(config) == 0
+
+    result = tmp_path / "unzipped"
+    epub_container.unzip(config.output, result)
+    assert list(result.rglob("*.opus"))  # the chapter audio is Opus
+
+    opf_text = next(result.rglob("*.opf")).read_text(encoding="utf-8")
+    assert "audio/ogg; codecs=opus" in opf_text  # declared as the Opus core media type
+
+    java = _java_executable()
+    assert java is not None
+
+    completed = subprocess.run(
+        [java, "-jar", str(_EPUBCHECK_JAR), str(config.output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 

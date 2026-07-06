@@ -4,18 +4,22 @@ import math
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
+import soundfile as sf  # pyright: ignore[reportMissingTypeStubs]
 
 from spantrack.audio_assembly import (
     BreakAfter,
     CompletedCommand,
+    EncodeSettings,
     FfmpegEncodeError,
     FfmpegNotFoundError,
     assemble,
     encode_chapter,
 )
+from spantrack.run_config import AudioFormat
 from spantrack.tts.backend import SAMPLE_RATE
 
 
@@ -135,7 +139,7 @@ def test_encode_builds_command_and_streams_pcm(tmp_path: Path):
     encode_chapter(
         pcm,
         out,
-        bitrate=64_000,
+        settings=EncodeSettings(AudioFormat.MP3, 64_000),
         locate=lambda _: "/usr/bin/ffmpeg",
         runner=runner,
     )
@@ -153,12 +157,30 @@ def test_encode_builds_command_and_streams_pcm(tmp_path: Path):
     assert runner.stdins[0] == np.ascontiguousarray(pcm, dtype="<f4").tobytes()
 
 
+def test_encode_uses_opus_codec(tmp_path: Path):
+    runner = _RecordingRunner()
+    out = tmp_path / "chapter.opus"
+
+    encode_chapter(
+        _tone(0.05),
+        out,
+        settings=EncodeSettings(AudioFormat.OPUS, 48_000),
+        locate=lambda _: "/usr/bin/ffmpeg",
+        runner=runner,
+    )
+
+    command = runner.commands[0]
+    assert command[command.index("-c:a") + 1] == "libopus"
+    assert command[command.index("-b:a") + 1] == "48000"
+    assert command[-1] == str(out)
+
+
 def test_encode_raises_when_ffmpeg_missing(tmp_path: Path):
     with pytest.raises(FfmpegNotFoundError, match="ffmpeg"):
         encode_chapter(
             _tone(0.05),
             tmp_path / "c.mp3",
-            bitrate=64_000,
+            settings=EncodeSettings(AudioFormat.MP3, 64_000),
             locate=lambda _: None,
         )
 
@@ -170,7 +192,7 @@ def test_encode_raises_on_nonzero_exit(tmp_path: Path):
         encode_chapter(
             _tone(0.05),
             tmp_path / "c.mp3",
-            bitrate=64_000,
+            settings=EncodeSettings(AudioFormat.MP3, 64_000),
             locate=lambda _: "ffmpeg",
             runner=runner,
         )
@@ -180,9 +202,26 @@ def test_encode_raises_on_nonzero_exit(tmp_path: Path):
 def test_encode_produces_a_playable_mp3(tmp_path: Path):
     out = tmp_path / "chapter.mp3"
 
-    encode_chapter(_tone(0.2), out, bitrate=64_000)
+    encode_chapter(_tone(0.2), out, settings=EncodeSettings(AudioFormat.MP3, 64_000))
 
     data = out.read_bytes()
     assert len(data) > 0
     # ffmpeg's mp3 muxer opens with an ID3 tag or a raw frame sync.
     assert data[:3] == b"ID3" or data[0] == 0xFF
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_encode_produces_a_playable_opus(tmp_path: Path):
+    out = tmp_path / "chapter.opus"
+
+    encode_chapter(_tone(0.2), out, settings=EncodeSettings(AudioFormat.OPUS, 64_000))
+
+    data = out.read_bytes()
+    assert len(data) > 0
+    assert data[:4] == b"OggS"  # the Ogg container magic
+
+    # A real, decodable Ogg Opus stream: mono at 24 kHz, the assembled duration.
+    audio, sample_rate = cast("tuple[Any, int]", sf.read(out))
+    assert sample_rate == SAMPLE_RATE
+    assert audio.ndim == 1  # mono
+    assert math.isclose(len(audio) / sample_rate, 0.2, abs_tol=0.02)

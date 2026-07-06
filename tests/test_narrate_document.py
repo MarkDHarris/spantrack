@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from spantrack import chapter_sidecar, pipeline
 from spantrack.lexicon import Lexicon
 from spantrack.lxml_reading import XmlElement, hardened_parser
-from spantrack.run_config import Granularity
+from spantrack.run_config import AudioFormat, Granularity
 from spantrack.sentence_cache import SentenceCache
 from spantrack.tts.backend import TokenTimestamp
 
@@ -69,6 +69,7 @@ def _context(backend: _FakeBackend, cache_root: Path) -> pipeline.NarrationConte
         lexicon=None,
         spantrack_version="0.1.0",
         bitrate=64_000,
+        audio_format=AudioFormat.MP3,
     )
 
 
@@ -166,6 +167,7 @@ def _word_context(backend: _FakeBackend, cache_root: Path) -> pipeline.Narration
         lexicon=None,
         spantrack_version="0.1.0",
         bitrate=64_000,
+        audio_format=AudioFormat.MP3,
         granularity=Granularity.WORD,
     )
 

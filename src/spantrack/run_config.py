@@ -35,6 +35,24 @@ class AudioFormat(enum.StrEnum):
     MP3 = "mp3"
     OPUS = "opus"
 
+    @property
+    def extension(self) -> str:
+        """File extension for the encoded chapter, without a leading dot."""
+        return self.value
+
+    @property
+    def media_type(self) -> str:
+        """EPUB manifest media type for this format's container."""
+        return _AUDIO_MEDIA_TYPES[self]
+
+
+# EPUB 3.3 core media types for the supported audio containers; single-sourced here so
+# the encode stage, the audio filename, and the OPF manifest item cannot drift apart.
+_AUDIO_MEDIA_TYPES: dict[AudioFormat, str] = {
+    AudioFormat.MP3: "audio/mpeg",
+    AudioFormat.OPUS: "audio/ogg; codecs=opus",
+}
+
 
 class Device(enum.StrEnum):
     """Synthesis device selection passed to Kokoro."""

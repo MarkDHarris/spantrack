@@ -23,7 +23,6 @@ from spantrack.lxml_reading import (
 from spantrack.smil import clock_value
 
 __all__ = [
-    "MP3_MEDIA_TYPE",
     "SMIL_MEDIA_TYPE",
     "XHTML_MEDIA_TYPE",
     "ChapterOverlay",
@@ -319,7 +318,6 @@ def _require_within_container(base_dir: str, href: str) -> str:
     return f"{resolved}#{fragment}" if fragment else resolved
 
 
-MP3_MEDIA_TYPE = "audio/mpeg"
 SMIL_MEDIA_TYPE = "application/smil+xml"
 
 
@@ -336,14 +334,17 @@ class ManifestEntry:
 class ChapterOverlay:
     """The media-overlay wiring for one narrated chapter.
 
-    `content_item_id` is the existing XHTML manifest item the overlay attaches to; the
-    audio/smil ids and OPF-relative hrefs name the new manifest items; `duration_s` is
-    the chapter's audio length, summed into the total `media:duration`.
+    `content_item_id` is the existing XHTML manifest item the overlay attaches to. The
+    audio/smil ids and OPF-relative hrefs name the new manifest items, and
+    `audio_media_type` is the audio item's EPUB media type (`audio/mpeg` or
+    `audio/ogg; codecs=opus`). `duration_s` is the chapter audio length, summed into
+    the total `media:duration`.
     """
 
     content_item_id: str
     audio_id: str
     audio_href: str
+    audio_media_type: str
     smil_id: str
     smil_href: str
     duration_s: float
@@ -390,7 +391,12 @@ def patch_opf_media_overlays(
             )
             raise OpfError(err_msg)
 
-        _append_item(manifest, overlay.audio_id, overlay.audio_href, MP3_MEDIA_TYPE)
+        _append_item(
+            manifest,
+            overlay.audio_id,
+            overlay.audio_href,
+            overlay.audio_media_type,
+        )
         _append_item(manifest, overlay.smil_id, overlay.smil_href, SMIL_MEDIA_TYPE)
         content.set("media-overlay", overlay.smil_id)
         _append_meta(

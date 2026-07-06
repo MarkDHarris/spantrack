@@ -18,6 +18,7 @@ def _overlay() -> opf.ChapterOverlay:
         content_item_id="ch1",
         audio_id="ch1-audio",
         audio_href="audio/chapter1.mp3",
+        audio_media_type="audio/mpeg",
         smil_id="ch1-smil",
         smil_href="chapter1.smil",
         duration_s=12.5,
@@ -274,12 +275,37 @@ def test_patch_registers_overlay_and_stylesheet_manifest_items(tmp_path: Path):
     smil = package.item_by_id("ch1-smil")
     css = package.item_by_id("highlight-css")
     assert audio is not None
-    assert audio.media_type == opf.MP3_MEDIA_TYPE
+    assert audio.media_type == "audio/mpeg"
     assert audio.href == "audio/chapter1.mp3"
     assert smil is not None
     assert smil.media_type == opf.SMIL_MEDIA_TYPE
     assert css is not None
     assert css.media_type == "text/css"
+
+
+def test_patch_registers_opus_audio_media_type(tmp_path: Path):
+    root = _container_with_opf(tmp_path)
+    overlay = opf.ChapterOverlay(
+        content_item_id="ch1",
+        audio_id="ch1-audio",
+        audio_href="audio/chapter1.opus",
+        audio_media_type="audio/ogg; codecs=opus",
+        smil_id="ch1-smil",
+        smil_href="chapter1.smil",
+        duration_s=12.5,
+    )
+
+    opf.patch_opf_media_overlays(
+        root / "content.opf",
+        [overlay],
+        narrator="n",
+        active_class="-spantrack-active",
+    )
+
+    audio = opf.read_package(root).item_by_id("ch1-audio")
+    assert audio is not None
+    assert audio.media_type == "audio/ogg; codecs=opus"
+    assert audio.href == "audio/chapter1.opus"
 
 
 def test_patch_sets_media_overlay_attr_and_media_metadata(tmp_path: Path):
@@ -315,8 +341,8 @@ def test_patch_total_duration_sums_all_overlays(tmp_path: Path):
     )
     opf_path = root / "content.opf"
     overlays = [
-        opf.ChapterOverlay("ch1", "a1", "a1.mp3", "s1", "s1.smil", 10.0),
-        opf.ChapterOverlay("ch2", "a2", "a2.mp3", "s2", "s2.smil", 5.5),
+        opf.ChapterOverlay("ch1", "a1", "a1.mp3", "audio/mpeg", "s1", "s1.smil", 10.0),
+        opf.ChapterOverlay("ch2", "a2", "a2.mp3", "audio/mpeg", "s2", "s2.smil", 5.5),
     ]
 
     opf.patch_opf_media_overlays(
@@ -328,7 +354,15 @@ def test_patch_total_duration_sums_all_overlays(tmp_path: Path):
 
 def test_patch_raises_for_unknown_content_item(tmp_path: Path):
     root = _container_with_opf(tmp_path)
-    unknown = opf.ChapterOverlay("missing", "a", "a.mp3", "s", "s.smil", 1.0)
+    unknown = opf.ChapterOverlay(
+        "missing",
+        "a",
+        "a.mp3",
+        "audio/mpeg",
+        "s",
+        "s.smil",
+        1.0,
+    )
 
     with pytest.raises(opf.OpfError, match="missing"):
         opf.patch_opf_media_overlays(
