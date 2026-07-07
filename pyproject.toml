@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Efe Özyay", email = "hi@efe.cv" }]
 keywords = ["epub", "tts", "media-overlays", "kokoro", "audiobook"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 4 - Beta",
   "Natural Language :: English",
   "Environment :: Console",
   "Programming Language :: Python :: 3 :: Only",
