@@ -69,6 +69,14 @@ def test_missing_file_raises(tmp_path: Path):
         load(tmp_path / "does-not-exist.toml")
 
 
-def test_entries_exposes_lowercased_keys(tmp_path: Path):
+def test_entries_exposes_case_folded_keys(tmp_path: Path):
     lexicon = load(_write(tmp_path, '[words]\nGiF = "JIF"\n'))
     assert lexicon.entries == {"gif": "JIF"}
+
+
+def test_get_case_folds_beyond_ascii(tmp_path: Path):
+    # casefold (not str.lower) maps the German eszett to "ss", so an eszett-keyed entry
+    # still matches its uppercased spelling; str.lower would leave the two unequal.
+    eszett = chr(0x00DF)
+    lexicon = load(_write(tmp_path, f'[words]\n"stra{eszett}e" = "SHTRAH-se"\n'))
+    assert lexicon.get("STRASSE") == "SHTRAH-se"

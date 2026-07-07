@@ -18,7 +18,7 @@ class LexiconError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Lexicon:
-    """A case-insensitive pronunciation lexicon: lowercased word -> phoneme string.
+    """A case-insensitive pronunciation lexicon: case-folded word -> phoneme string.
 
     Backend-neutral: phoneme strings are stored verbatim, never validated here.
     """
@@ -27,7 +27,7 @@ class Lexicon:
 
     def get(self, word: str) -> str | None:
         """Return the phoneme override for `word` (case-insensitive), or None."""
-        return self.entries.get(word.lower())
+        return self.entries.get(word.casefold())
 
 
 def load(path: Path) -> Lexicon:
@@ -71,7 +71,7 @@ def load(path: Path) -> Lexicon:
             msg = f"lexicon entry {word!r} must be a string, not {type(value).__name__}"
             raise LexiconError(msg)
 
-        key = word.lower()
+        key = word.casefold()
         if key in entries:
             msg = f"duplicate case-insensitive lexicon key {key!r}"
             raise LexiconError(msg)
