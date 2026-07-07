@@ -8,13 +8,18 @@ before the cache write, cached audio is canonical regardless of backend, and the
 assembler can insert its own exact gaps between sentences.
 """
 
-from dataclasses import replace
 from typing import Protocol
 
 import numpy as np
 
 from spantrack.sentence_cache import SentenceCache
-from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
+from spantrack.tts.backend import (
+    SAMPLE_RATE,
+    Pcm,
+    Synthesis,
+    TokenTimestamp,
+    shift_tokens,
+)
 
 __all__ = ["synthesize_sentence"]
 
@@ -35,17 +40,15 @@ class _Backend(Protocol):
     @property
     def speed(self) -> float: ...
 
-    def synthesize(
-        self, text: str
-    ) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]: ...
+    def synthesize(self, text: str) -> Synthesis: ...
 
 
 def synthesize_sentence(
     backend: _Backend,
     cache: SentenceCache,
     text: str,
-) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]:
-    """Return `text`'s canonical audio + timestamps, synthesizing only on a cache miss.
+) -> tuple[str, Pcm, tuple[TokenTimestamp, ...] | None]:
+    """Return `text`'s cache key, canonical audio, and timestamps; synthesize on a miss.
 
     Args:
         backend: The TTS backend; its `model_version`/`voice`/`speed` key the cache.
@@ -54,25 +57,26 @@ def synthesize_sentence(
             is also the text component of the cache key.
 
     Returns:
-        The silence-trimmed PCM and the timestamps shifted to match, `None` timestamps
-        for a backend that emits none.
+        The content-addressed cache key, the silence-trimmed PCM, and the timestamps
+        shifted to match (`None` for a backend that emits none). The key is returned so
+        the caller reuses it instead of re-deriving the same hash from the same inputs.
     """
     key = cache.key(backend.model_version, backend.voice, backend.speed, text)
     cached = cache.get(key)
     if cached is not None:
-        return cached
+        return key, *cached
 
     pcm, tokens = backend.synthesize(text)
     trimmed, shifted = _trim_silence(pcm, tokens)
     cache.put(key, trimmed, shifted)
 
-    return trimmed, shifted
+    return key, trimmed, shifted
 
 
 def _trim_silence(
     pcm: Pcm,
     tokens: tuple[TokenTimestamp, ...] | None,
-) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]:
+) -> Synthesis:
     """Trim leading/trailing silence; shift token timestamps by the trimmed lead.
 
     Fully-silent audio yields empty PCM and no tokens: any timestamps would describe
@@ -85,12 +89,7 @@ def _trim_silence(
 
     lead = int(loud[0])
     trimmed = pcm[lead : int(loud[-1]) + 1]
-    if tokens is None or lead == 0:
+    if lead == 0:
         return trimmed, tokens
 
-    shift = lead / SAMPLE_RATE
-    shifted = tuple(
-        replace(token, start_s=token.start_s - shift, end_s=token.end_s - shift)
-        for token in tokens
-    )
-    return trimmed, shifted
+    return trimmed, shift_tokens(tokens, -lead / SAMPLE_RATE)

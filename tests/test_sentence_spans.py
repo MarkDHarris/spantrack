@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from copy import deepcopy
-from itertools import count, pairwise
+from itertools import count
 
 import pytest
 from lxml import etree
@@ -10,15 +10,12 @@ from xhtml_documents import parse_body as _parse
 from spantrack.audio_assembly import BreakAfter
 from spantrack.lxml_reading import XHTML_NS, XmlElement, hardened_parser, qname
 from spantrack.sentence_spans import (
-    BlockText,
     extract_block_text,
     inject,
     inject_block,
     inject_words,
     narratable_blocks,
 )
-
-_XHTML = "http://www.w3.org/1999/xhtml"
 
 
 def _local(element: XmlElement) -> str:
@@ -84,9 +81,9 @@ def test_returns_live_dom_nodes():
     # elements must be the live tree nodes, not detached copies.
     root = _parse("<p>hi</p><p>bye</p>")
     blocks = narratable_blocks(root)
-    assert blocks[0] is root.find(f".//{{{_XHTML}}}p")
+    assert blocks[0] is root.find(f".//{{{XHTML_NS}}}p")
 
-    etree.SubElement(blocks[0], f"{{{_XHTML}}}span").text = "MARK"
+    etree.SubElement(blocks[0], f"{{{XHTML_NS}}}span").text = "MARK"
     assert b"MARK" in etree.tostring(root)
 
 
@@ -160,96 +157,29 @@ def test_empty_body_yields_nothing():
     assert narratable_blocks(_parse("")) == []
 
 
-def _extract(inner: str) -> BlockText:
+def _extract(inner: str) -> str:
     block = narratable_blocks(_parse(f"<p>{inner}</p>"))[0]
     return extract_block_text(block)
 
 
-def _child(block_text: BlockText, local: str) -> XmlElement:
-    node = block_text.pieces[0].node.find(f".//{{{_XHTML}}}{local}")
-    assert node is not None
-    return node
-
-
-def test_extract_plain_block_maps_to_its_own_text():
-    block_text = _extract("Hello there.")
-    assert block_text.text == "Hello there."
-    assert len(block_text.pieces) == 1
-
-    piece = block_text.pieces[0]
-    assert piece.is_tail is False
-    assert piece.offset == 0
-    assert piece.string == "Hello there."
+def test_extract_plain_block_is_its_own_text():
+    assert _extract("Hello there.") == "Hello there."
 
 
 def test_extract_concatenates_text_and_tails_in_document_order():
-    block_text = _extract("a<em>b</em>c<a>d</a>e")
-
-    assert block_text.text == "abcde"
-    assert [(p.is_tail, p.string) for p in block_text.pieces] == [
-        (False, "a"),
-        (False, "b"),
-        (True, "c"),
-        (False, "d"),
-        (True, "e"),
-    ]
+    assert _extract("a<em>b</em>c<a>d</a>e") == "abcde"
 
 
 def test_extract_flattens_nested_inline():
-    block_text = _extract("a<em><strong>x</strong></em>b")
-
-    assert block_text.text == "axb"
-    assert [(p.is_tail, p.string) for p in block_text.pieces] == [
-        (False, "a"),
-        (False, "x"),
-        (True, "b"),
-    ]
-
-
-def test_offsets_resolve_to_the_correct_node_and_kind():
-    block_text = _extract("Go <em>deep</em> now")
-    em = _child(block_text, "em")
-
-    assert block_text.text == "Go deep now"
-    # Every character offset maps back to the DOM string it came from.
-    assert block_text.locate(0)[0].is_tail is False  # 'G' in the block's own text
-    assert block_text.locate(3) == (block_text.pieces[1], 0)  # 'd', em.text[0]
-    node, local = block_text.locate(7)  # ' ' in em.tail
-    assert node.node is em
-    assert node.is_tail is True
-    assert local == 0
-    # Each piece's recorded string matches the live DOM string it points at.
-    for piece in block_text.pieces:
-        source = piece.node.tail if piece.is_tail else piece.node.text
-        assert source == piece.string
-        assert (
-            block_text.text[piece.offset : piece.offset + len(piece.string)]
-            == piece.string
-        )
+    assert _extract("a<em><strong>x</strong></em>b") == "axb"
 
 
 def test_extract_skips_non_prose_subtree_but_keeps_its_tail():
-    block_text = _extract("before <code>ignored</code> after")
-
-    assert block_text.text == "before  after"
-    assert [(p.is_tail, p.string) for p in block_text.pieces] == [
-        (False, "before "),
-        (True, " after"),
-    ]
+    assert _extract("before <code>ignored</code> after") == "before  after"
 
 
 def test_extract_ignores_comment_body_keeps_tail():
-    block_text = _extract("x<!-- note -->y")
-
-    assert block_text.text == "xy"
-
-
-@pytest.mark.parametrize("offset", [2, 7, -1])
-def test_locate_rejects_out_of_range_offset(offset: int):
-    block_text = _extract("hi")  # text "hi": only offsets 0 and 1 are in range
-
-    with pytest.raises(IndexError):
-        block_text.locate(offset)
+    assert _extract("x<!-- note -->y") == "xy"
 
 
 def test_bare_namespace_document_is_not_narrated():
@@ -268,50 +198,26 @@ def test_bare_namespace_document_is_not_narrated():
     assert narratable_blocks(doc) == []
 
 
-def _assert_pieces_tile_and_map(block_text: BlockText) -> None:
-    pieces = block_text.pieces
-
-    # Pieces tile [0, len(text)) contiguously — no gaps, no overlaps, none zero-length.
-    assert pieces[0].offset == 0
-    for prev, nxt in pairwise(pieces):
-        assert nxt.offset == prev.offset + len(prev.string)
-    assert pieces[-1].offset + len(pieces[-1].string) == len(block_text.text)
-    assert all(piece.string for piece in pieces)
-
-    # Every offset resolves to the right piece, local index, and live DOM string.
-    for offset in range(len(block_text.text)):
-        piece, local = block_text.locate(offset)
-        assert piece.string[local] == block_text.text[offset]
-        if piece.node.tag is etree.Entity and not piece.is_tail:
-            continue  # entity char piece: string is the resolved char, not node.text
-        source = piece.node.tail if piece.is_tail else piece.node.text
-        assert source == piece.string
-
-
 @pytest.mark.parametrize(
-    "inner",
+    ("inner", "expected"),
     [
-        "a<em>b</em>c<a>d</a>e",
-        "café <em>x</em> y",  # multibyte: offsets are code points, not bytes
-        "x\U0001f600<em>y</em>z",  # astral char is one code point
-        "before <code>skip</code> after",  # only prose is a tail after a skipped child
-        "p<!-- c -->q",  # tail piece points at the comment node
+        ("a<em>b</em>c<a>d</a>e", "abcde"),
+        ("x\U0001f600<em>y</em>z", "x\U0001f600yz"),  # astral char is one code point
+        ("before <code>skip</code> after", "before  after"),  # tail after skipped child
+        ("p<!-- c -->q", "pq"),  # comment body dropped, tail kept
     ],
 )
-def test_pieces_tile_block_text_and_map_every_offset(inner: str):
-    _assert_pieces_tile_and_map(_extract(inner))
+def test_extract_flattens_prose_across_inline_and_skipped_markup(
+    inner: str,
+    expected: str,
+):
+    assert _extract(inner) == expected
 
 
 def test_extract_omits_empty_string_nodes():
-    # Empty CDATA parses to `.text == ""` (not None); it must not become a zero-length
-    # piece that locate() can never resolve.
-    block_text = _extract("before <em><![CDATA[]]></em> after")
-
-    assert all(piece.string for piece in block_text.pieces)
-    assert [(p.is_tail, p.string) for p in block_text.pieces] == [
-        (False, "before "),
-        (True, " after"),
-    ]
+    # Empty CDATA parses to `.text == ""` (not None); it must not perturb the flattened
+    # text (it previously risked a zero-length offset-map piece).
+    assert _extract("before <em><![CDATA[]]></em> after") == "before  after"
 
 
 _RSQUO_DTD = '<!DOCTYPE html [ <!ENTITY rsquo "&#8217;"> ]>'
@@ -322,13 +228,13 @@ _MDASH = chr(0x2014)  # EM DASH
 def _parse_with_dtd(dtd: str, body: str) -> XmlElement:
     doc = (
         f'<?xml version="1.0" encoding="UTF-8"?>{dtd}'
-        f'<html xmlns="{_XHTML}"><head><title>t</title></head>'
+        f'<html xmlns="{XHTML_NS}"><head><title>t</title></head>'
         f"<body>{body}</body></html>"
     )
     return etree.fromstring(doc.encode(), hardened_parser())
 
 
-def _extract_with_dtd(dtd: str, inner: str) -> BlockText:
+def _extract_with_dtd(dtd: str, inner: str) -> str:
     return extract_block_text(
         narratable_blocks(_parse_with_dtd(dtd, f"<p>{inner}</p>"))[0]
     )
@@ -338,36 +244,17 @@ def test_entity_reference_resolves_into_narration_text():
     # A named entity (declared in the internal DTD subset) contributes its resolved
     # character to the narration text; numeric refs and predefined entities already
     # expand into `.text` during parsing.
-    block_text = _extract_with_dtd(_RSQUO_DTD, "don&rsquo;t")
-
-    assert block_text.text == "don" + _RSQUO + "t"
+    assert _extract_with_dtd(_RSQUO_DTD, "don&rsquo;t") == "don" + _RSQUO + "t"
 
 
-def test_entity_piece_is_atomic_and_leaves_the_dom_untouched():
-    block_text = _extract_with_dtd(_RSQUO_DTD, "a&rsquo;b")
+def test_entity_reference_flattens_amid_following_markup():
+    # The resolved entity char joins the flattened text in order, ahead of later inline
+    # markup, and the DOM entity node is left intact (its bytes unchanged).
+    root = _parse_with_dtd(_RSQUO_DTD, "<p>x&rsquo;<em>y</em>z</p>")
+    block = narratable_blocks(root)[0]
 
-    assert block_text.text == "a" + _RSQUO + "b"
-    entity_piece, tail_piece = block_text.pieces[1], block_text.pieces[2]
-    # The atomic entity-char piece is `Entity tag and not is_tail`; its DOM text stays
-    # the literal reference, so the output document's bytes are unchanged.
-    assert entity_piece.string == _RSQUO
-    assert entity_piece.node.tag is etree.Entity
-    assert entity_piece.is_tail is False
-    assert entity_piece.node.text == "&rsquo;"
-    # The text after the entity is an ordinary tail piece on the same node.
-    assert (tail_piece.string, tail_piece.is_tail) == ("b", True)
-    assert tail_piece.node is entity_piece.node
-
-
-def test_entity_offsets_stay_aligned_across_following_markup():
-    block_text = _extract_with_dtd(_RSQUO_DTD, "x&rsquo;<em>y</em>z")
-
-    assert block_text.text == "x" + _RSQUO + "yz"
-    entity_piece, entity_local = block_text.locate(1)
-    assert entity_piece.node.tag is etree.Entity
-    assert entity_local == 0
-    following, _ = block_text.locate(2)  # 'y' in em.text, not shifted by the entity
-    assert following.string == "y"
+    assert extract_block_text(block) == "x" + _RSQUO + "yz"
+    assert b"&rsquo;" in etree.tostring(root)  # the entity node survives untouched
 
 
 def test_entity_only_block_is_narrated_not_dropped():
@@ -380,7 +267,7 @@ def test_entity_only_block_is_narrated_not_dropped():
     blocks = narratable_blocks(root)
 
     assert [_local(b) for b in blocks] == ["p"]
-    assert extract_block_text(blocks[0]).text == _MDASH + _MDASH
+    assert extract_block_text(blocks[0]) == _MDASH + _MDASH
 
 
 def test_nested_or_custom_entity_is_dropped_not_leaked():
@@ -393,31 +280,19 @@ def test_nested_or_custom_entity_is_dropped_not_leaked():
     )
     block_text = extract_block_text(narratable_blocks(root)[0])
 
-    assert block_text.text == "xy"
-    assert "&" not in block_text.text
+    assert block_text == "xy"
+    assert "&" not in block_text
     assert b"&a;" in etree.tostring(
         root
     )  # the entity reference survives in the document
 
 
-def test_entity_block_tiles_and_maps_every_offset():
-    # Same tiling + offset-map invariant as the plain case, but with an atomic entity
-    # char piece in the mix (the shared helper retains the entity-skip conditional).
-    _assert_pieces_tile_and_map(_extract_with_dtd(_RSQUO_DTD, "a&rsquo;<em>b</em>c"))
-
-
-def test_entity_with_no_tail_is_a_single_non_tail_char_piece():
-    block_text = _extract_with_dtd(_RSQUO_DTD, "end&rsquo;")
-
-    assert block_text.text == "end" + _RSQUO
-    last = block_text.pieces[-1]
-    assert last.node.tag is etree.Entity
-    assert last.is_tail is False
-    assert last.string == _RSQUO
+def test_entity_with_no_tail_flattens_to_a_trailing_char():
+    assert _extract_with_dtd(_RSQUO_DTD, "end&rsquo;") == "end" + _RSQUO
 
 
 def _block(inner: str) -> XmlElement:
-    node = _parse(f"<p>{inner}</p>").find(f".//{{{_XHTML}}}p")
+    node = _parse(f"<p>{inner}</p>").find(f".//{{{XHTML_NS}}}p")
     assert node is not None
     return node
 
@@ -428,7 +303,7 @@ def _ids() -> Iterator[str]:
 
 def _inner(block: XmlElement) -> str:
     # Serialize the block with the default xmlns stripped, for readable asserts.
-    return etree.tostring(block, encoding="unicode").replace(f' xmlns="{_XHTML}"', "")
+    return etree.tostring(block, encoding="unicode").replace(f' xmlns="{XHTML_NS}"', "")
 
 
 def _strip_spans(element: XmlElement, injected_ids: set[str]) -> str:
@@ -436,10 +311,12 @@ def _strip_spans(element: XmlElement, injected_ids: set[str]) -> str:
     # so a publisher <span id="s99"> survives). Retag to a sentinel first, since
     # strip_tags cannot filter by attribute.
     clone = deepcopy(element)
-    for span in clone.iter(f"{{{_XHTML}}}span"):
+    for span in clone.iter(f"{{{XHTML_NS}}}span"):
         if span.get("id") in injected_ids:
-            span.tag = f"{{{_XHTML}}}_injected_"
-    etree.strip_tags(clone, f"{{{_XHTML}}}_injected_")
+            span.tag = f"{{{XHTML_NS}}}_injected_"
+
+    etree.strip_tags(clone, f"{{{XHTML_NS}}}_injected_")
+
     return _inner(clone)
 
 
@@ -506,7 +383,7 @@ def test_display_text_is_whitespace_collapsed():
 
 def test_entity_reference_is_wrapped_atomically():
     root = _parse_with_dtd(_RSQUO_DTD, "<p>don&rsquo;t stop.</p>")
-    block = root.find(f".//{{{_XHTML}}}p")
+    block = root.find(f".//{{{XHTML_NS}}}p")
     assert block is not None
 
     emitted = inject_block(block, _ids())

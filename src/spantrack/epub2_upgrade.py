@@ -29,7 +29,12 @@ from spantrack.lxml_reading import (
     qname,
     split_fragment,
 )
-from spantrack.opf import XHTML_MEDIA_TYPE, Package
+from spantrack.opf import (
+    XHTML_MEDIA_TYPE,
+    Package,
+    append_manifest_item,
+    append_meta,
+)
 
 __all__ = ["upgrade"]
 
@@ -303,15 +308,8 @@ def _patch_opf(path: Path, *, nav_id: str, nav_href: str, modified: str) -> None
 
     _migrate_dc_opf_attributes(root, metadata)
 
-    meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
-    meta.set("property", "dcterms:modified")
-    meta.text = modified
-
-    item = etree.SubElement(manifest, qname(OPF_NS, "item"))
-    item.set("id", nav_id)
-    item.set("href", nav_href)
-    item.set("media-type", XHTML_MEDIA_TYPE)
-    item.set("properties", "nav")
+    append_meta(metadata, "dcterms:modified", modified)
+    append_manifest_item(manifest, nav_id, nav_href, XHTML_MEDIA_TYPE, properties="nav")
 
     tree.write(str(path), xml_declaration=True, encoding="utf-8")
 
@@ -358,28 +356,15 @@ def _migrate_dc_opf_attributes(root: XmlElement, metadata: XmlElement) -> None:
 
             localname = key[len(prefix) :]
             if localname == "role":
-                _add_refining_meta(
-                    metadata, element_id, "role", value, scheme=_MARC_RELATORS
+                append_meta(
+                    metadata,
+                    "role",
+                    value,
+                    refines=f"#{element_id}",
+                    scheme=_MARC_RELATORS,
                 )
             elif localname == "file-as":
-                _add_refining_meta(metadata, element_id, "file-as", value)
-
-
-def _add_refining_meta(
-    metadata: XmlElement,
-    refines_id: str,
-    prop: str,
-    value: str,
-    *,
-    scheme: str | None = None,
-) -> None:
-    meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
-    meta.set("refines", f"#{refines_id}")
-    meta.set("property", prop)
-    if scheme is not None:
-        meta.set("scheme", scheme)
-
-    meta.text = value
+                append_meta(metadata, "file-as", value, refines=f"#{element_id}")
 
 
 def _normalize_content_doctypes(container_root: Path, package: Package) -> None:
@@ -421,10 +406,11 @@ def _free_nav_target(
     base_dir: str,
     opf_root: XmlElement,
 ) -> tuple[str, str]:
-    # XML ids are document-unique and _patch_opf injects the nav item into the OPF tree,
-    # so the nav id must dodge every id in the OPF, not just manifest item ids: a
-    # non-manifest <dc:identifier id="nav"> collides with the injected item too.
-    ids = {item.item_id for item in package.manifest} | document_ids(opf_root)
+    # XML ids are document-unique and _patch_opf injects the nav item into the OPF, so
+    # the nav id must dodge every id in the OPF -- document_ids returns exactly that set
+    # (manifest item ids plus non-manifest ids like <dc:identifier id="nav">, and any
+    # href-less item read_package drops), so it stands alone.
+    ids = document_ids(opf_root)
     hrefs = {item.href for item in package.manifest}
 
     nav_id = _unused(_NAV_BASE_NAME, lambda candidate: candidate in ids)

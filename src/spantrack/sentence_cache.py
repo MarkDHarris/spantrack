@@ -26,6 +26,7 @@ from spantrack import atomic_write
 from spantrack.tts.backend import (
     SAMPLE_RATE,
     Pcm,
+    Synthesis,
     TokenTimestamp,
     token_from_dict,
     token_to_dict,
@@ -78,7 +79,7 @@ class SentenceCache:
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    def get(self, key: str) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None] | None:
+    def get(self, key: str) -> Synthesis | None:
         """Return the cached `(pcm, tokens)` for `key`, or None on a miss.
 
         `tokens` is None when the backend that wrote the entry emitted no timestamps.

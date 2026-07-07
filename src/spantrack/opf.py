@@ -33,6 +33,8 @@ __all__ = [
     "OpfError",
     "Package",
     "SpineItem",
+    "append_manifest_item",
+    "append_meta",
     "patch_opf_media_overlays",
     "read_package",
     "resolve_within_container",
@@ -393,15 +395,20 @@ def patch_opf_media_overlays(
             )
             raise OpfError(err_msg)
 
-        _append_item(
+        append_manifest_item(
             manifest,
             overlay.audio_id,
             overlay.audio_href,
             overlay.audio_media_type,
         )
-        _append_item(manifest, overlay.smil_id, overlay.smil_href, SMIL_MEDIA_TYPE)
+        append_manifest_item(
+            manifest,
+            overlay.smil_id,
+            overlay.smil_href,
+            SMIL_MEDIA_TYPE,
+        )
         content.set("media-overlay", overlay.smil_id)
-        _append_meta(
+        append_meta(
             metadata,
             "media:duration",
             clock_value(overlay.duration_s),
@@ -410,39 +417,53 @@ def patch_opf_media_overlays(
         total += overlay.duration_s
 
     if stylesheet is not None:
-        _append_item(
-            manifest, stylesheet.item_id, stylesheet.href, stylesheet.media_type
+        append_manifest_item(
+            manifest,
+            stylesheet.item_id,
+            stylesheet.href,
+            stylesheet.media_type,
         )
 
-    _append_meta(metadata, "media:duration", clock_value(total))
-    _append_meta(metadata, "media:narrator", narrator)
-    _append_meta(metadata, "media:active-class", active_class)
+    append_meta(metadata, "media:duration", clock_value(total))
+    append_meta(metadata, "media:narrator", narrator)
+    append_meta(metadata, "media:active-class", active_class)
 
     tree.write(str(opf_path), xml_declaration=True, encoding="utf-8")
 
 
-def _append_item(
+def append_manifest_item(
     manifest: XmlElement,
     item_id: str,
     href: str,
     media_type: str,
+    *,
+    properties: str | None = None,
 ) -> None:
+    """Append a `<manifest><item>`: id, href, media type, and optional properties."""
     item = etree.SubElement(manifest, qname(OPF_NS, "item"))
     item.set("id", item_id)
     item.set("href", href)
     item.set("media-type", media_type)
 
+    if properties is not None:
+        item.set("properties", properties)
 
-def _append_meta(
+
+def append_meta(
     metadata: XmlElement,
     prop: str,
     text: str,
     *,
     refines: str | None = None,
+    scheme: str | None = None,
 ) -> None:
+    """Append a `<metadata><meta>`: property, text, and optional refines/scheme."""
     meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
     meta.set("property", prop)
     if refines is not None:
         meta.set("refines", refines)
+
+    if scheme is not None:
+        meta.set("scheme", scheme)
 
     meta.text = text

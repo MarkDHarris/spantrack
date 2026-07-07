@@ -133,18 +133,16 @@ def test_unicode_and_newline_slices_are_codepoint_exact():
     assert text[ranges[0][1] : ranges[1][0]] == "\n"
 
 
-def test_reproduces_curated_fiction_splits():
-    for text, expected in CASES:
-        assert tuple(_slices(text)) == expected
+@pytest.mark.parametrize(("text", "expected"), CASES)
+def test_reproduces_curated_fiction_splits(text: str, expected: tuple[str, ...]):
+    assert tuple(_slices(text)) == expected
 
 
-def test_agrees_with_syntok_oracle():
-    # Independent cross-check: pysbd's sentence count matches syntok's on every curated
+@pytest.mark.parametrize(("text", "expected"), CASES)
+def test_agrees_with_syntok_oracle(text: str, expected: tuple[str, ...]):
+    # Independent cross-check: pysbd's sentence count matches syntok's on this curated
     # case, and both match the hand-authored split. An unexpected divergence fails here.
-    for text, expected in CASES:
-        assert (
-            len(split_sentences(text)) == syntok_sentence_count(text) == len(expected)
-        ), text
+    assert len(split_sentences(text)) == syntok_sentence_count(text) == len(expected)
 
 
 def test_concat_failure_falls_back_to_single_unit_without_dropping_text():

@@ -17,7 +17,7 @@ the torch/misaki types never leak past this module.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -28,8 +28,10 @@ from spantrack.lexicon import Lexicon
 __all__ = [
     "SAMPLE_RATE",
     "Pcm",
+    "Synthesis",
     "TTSBackend",
     "TokenTimestamp",
+    "shift_tokens",
     "token_from_dict",
     "token_to_dict",
 ]
@@ -59,6 +61,12 @@ class TokenTimestamp:
     whitespace: str
 
 
+# The synthesize/cache result pair: canonical PCM plus per-token timings, or `None`
+# timings for a backend that emits none. Named once so the boundary reads the same at
+# every backend, cache, and synthesis site.
+type Synthesis = tuple[Pcm, tuple[TokenTimestamp, ...] | None]
+
+
 def token_to_dict(token: TokenTimestamp) -> dict[str, object]:
     """Serialize a token to a JSON-compatible dict.
 
@@ -83,6 +91,24 @@ def token_from_dict(row: Mapping[str, Any]) -> TokenTimestamp:
     )
 
 
+def shift_tokens(
+    tokens: tuple[TokenTimestamp, ...] | None,
+    delta_s: float,
+) -> tuple[TokenTimestamp, ...] | None:
+    """Shift every token's start/end by `delta_s` seconds; `None` passes through.
+
+    Used both to rebase a sentence's timings onto the chapter timeline (positive delta)
+    and to compensate for trimmed leading silence (negative delta).
+    """
+    if tokens is None:
+        return None
+
+    return tuple(
+        replace(token, start_s=token.start_s + delta_s, end_s=token.end_s + delta_s)
+        for token in tokens
+    )
+
+
 @runtime_checkable
 class TTSBackend(Protocol):
     """A pluggable text-to-speech backend."""
@@ -95,7 +121,7 @@ class TTSBackend(Protocol):
         """Rewrite `text`'s lexicon-matched words to the backend's override form."""
         ...
 
-    def synthesize(self, text: str) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]:
+    def synthesize(self, text: str) -> Synthesis:
         """Synthesize `text` to 24 kHz mono float32 PCM and per-token timestamps.
 
         Returns:

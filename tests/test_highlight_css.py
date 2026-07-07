@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from lxml import etree
+from xhtml_documents import parse_body
 
 from spantrack.highlight_css import (
     ACTIVE_CLASS,
@@ -11,22 +12,17 @@ from spantrack.highlight_css import (
     stylesheet,
     write_stylesheet,
 )
-from spantrack.lxml_reading import XmlElement, hardened_parser
+from spantrack.lxml_reading import XHTML_NS, XmlElement, hardened_parser
 
-_XHTML = "http://www.w3.org/1999/xhtml"
 _HREF = "spantrack/highlight.css"
 
 
 def _chapter() -> XmlElement:
-    doc = (
-        f'<html xmlns="{_XHTML}"><head><title>t</title></head>'
-        "<body><p>Text.</p></body></html>"
-    )
-    return etree.fromstring(doc.encode(), hardened_parser())
+    return parse_body("<p>Text.</p>")
 
 
 def _head(root: XmlElement) -> XmlElement:
-    head = root.find(f"{{{_XHTML}}}head")
+    head = root.find(f"{{{XHTML_NS}}}head")
     assert head is not None
     return head
 
@@ -52,7 +48,7 @@ def test_link_into_head_adds_one_stylesheet_link():
 
     link_into_head(root, _HREF)
 
-    links = _head(root).findall(f"{{{_XHTML}}}link")
+    links = _head(root).findall(f"{{{XHTML_NS}}}link")
     assert len(links) == 1
     assert links[0].get("rel") == "stylesheet"
     assert links[0].get("href") == _HREF
@@ -64,12 +60,12 @@ def test_link_into_head_is_idempotent():
     link_into_head(root, _HREF)
     link_into_head(root, _HREF)
 
-    assert len(_head(root).findall(f"{{{_XHTML}}}link")) == 1
+    assert len(_head(root).findall(f"{{{XHTML_NS}}}link")) == 1
 
 
 def test_link_into_head_leaves_body_untouched():
     root = _chapter()
-    body = root.find(f"{{{_XHTML}}}body")
+    body = root.find(f"{{{XHTML_NS}}}body")
     assert body is not None
 
     before = etree.tostring(body)
@@ -81,7 +77,7 @@ def test_link_into_head_leaves_body_untouched():
 
 def test_link_into_head_raises_without_head():
     root = etree.fromstring(
-        f'<html xmlns="{_XHTML}"><body><p>x</p></body></html>'.encode(),
+        f'<html xmlns="{XHTML_NS}"><body><p>x</p></body></html>'.encode(),
         hardened_parser(),
     )
 

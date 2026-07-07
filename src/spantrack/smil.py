@@ -2,13 +2,13 @@
 
 `build_smil` is the shared, granularity-agnostic emitter: it ties each injected `<span>`
 -- a sentence or a word -- to a clip in the chapter audio, regardless of how the caller
-derived the clip bounds. This module only serializes what it is handed and requires the
-clips be gapless (`clipEnd_n == clipBegin_{n+1}`).
+derived the clip bounds. This module only serializes what it is handed; it enforces no
+gaplessness of its own.
 
-In sentence mode the assembler's gapless intervals meet that requirement, so the overlay
-never flickers and never trips epubcheck's overlay-gap checks. In word mode the bounds
-come from per-token timestamps and the caller drops zero-duration clips, so exact
-gaplessness is not guaranteed there (the accepted experimental word-mode drift).
+In sentence mode the assembler supplies gapless clips (`clipEnd_n == clipBegin_{n+1}`),
+so the overlay never flickers and never trips epubcheck's overlay-gap checks. In word
+mode the bounds come from per-token timestamps and the caller drops zero-duration clips,
+so gaplessness is not guaranteed there.
 """
 
 from collections.abc import Sequence
@@ -59,7 +59,8 @@ def build_smil(
         text_doc_href: The content document href, used as the `<par>` text `src` base
             and the `<seq>` `epub:textref`.
         audio_href: The chapter audio href every `<par>`'s `<audio>` points at.
-        units: The sync units in document order; their clip bounds must be gapless.
+        units: The sync units in document order; their bounds are serialized verbatim,
+            with no gaplessness check.
 
     Returns:
         The serialized SMIL document (UTF-8, XML-declared).
@@ -91,5 +92,8 @@ def build_smil(
         audio.set("clipEnd", clock_value(unit.clip_end_s))
 
     return etree.tostring(
-        smil, encoding="utf-8", xml_declaration=True, pretty_print=True
+        smil,
+        encoding="utf-8",
+        xml_declaration=True,
+        pretty_print=True,
     )

@@ -44,6 +44,7 @@ def test_unzip_returns_member_names_in_archive_order(
     "member",
     [
         "../escape.txt",
+        "..\\escape.txt",  # backslash separator: the Windows zip-slip guard
         "/etc/passwd",
         "d:/evil.txt",  # drive letter: posixpath ignores it, Path.joinpath honors it
         "C:/evil.txt",

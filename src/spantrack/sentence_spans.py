@@ -5,10 +5,10 @@ becomes narration. Only leaves are yielded — a `blockquote` or `li` that wraps
 `p` contributes the inner `p`, never both, so no text is narrated twice. Subtrees that
 are not prose (`table`, `pre`, `code`, etc.) are pruned entirely.
 
-`extract_block_text` flattens one block into its raw narratable text plus a map from a
-character offset back to the DOM string it came from (an element's `.text` or a child's
-`.tail`). Segmentation runs on the raw text so its offsets map straight onto the DOM, so
-the next stage can wrap sentence runs in `<span>`s without disturbing inline markup.
+`extract_block_text` flattens one block into its raw narratable text -- an element's
+`.text` and its children's `.tail`s, in document order. Segmentation runs on that text,
+and `_segments` independently rebuilds the matching offsets over the live DOM, so the
+next stage can wrap sentence runs in `<span>`s without disturbing inline markup.
 """
 
 import html
@@ -25,10 +25,8 @@ from spantrack.text_normalization import collapse_whitespace
 from spantrack.word_alignment import segment_words
 
 __all__ = [
-    "BlockText",
     "InjectedSpan",
     "InjectedWord",
-    "TextPiece",
     "WordSentence",
     "extract_block_text",
     "inject",
@@ -55,52 +53,32 @@ _BLOCK_TAGS = frozenset(
     )
 )
 _SKIP_CONTAINERS = frozenset(
-    qname(XHTML_NS, tag) for tag in ("table", "pre", "code", "script", "style", "nav")
+    qname(XHTML_NS, tag)
+    for tag in (
+        "table",
+        "pre",
+        "code",
+        "script",
+        "style",
+        "nav",
+    )
+)
+_HEADING_TAGS = frozenset(
+    qname(XHTML_NS, tag)
+    for tag in (
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    )
 )
 
 
-@dataclass(frozen=True, slots=True)
-class TextPiece:
-    """One contiguous run of a block's raw text, tied to the DOM string it came from.
-
-    `is_tail` selects whether `string` is `node.text` (False) or `node.tail` (True);
-    `offset` is where the run starts in the block's raw text. An entity-reference node
-    yields an atomic piece whose `string` is the resolved character(s), identified by
-    `node.tag is etree.Entity and not is_tail` (a later stage wraps the node rather than
-    slicing text); the entity's own trailing text is an ordinary `is_tail` piece.
-    """
-
-    node: XmlElement
-    is_tail: bool
-    offset: int
-    string: str
-
-
-@dataclass(frozen=True, slots=True)
-class BlockText:
-    """A block's flattened narratable text with an offset-to-DOM map."""
-
-    text: str
-    pieces: tuple[TextPiece, ...]
-
-    def locate(self, offset: int) -> tuple[TextPiece, int]:
-        """Resolve a character offset to its piece and the local offset within it.
-
-        Args:
-            offset: A character offset into `text`, in `range(len(text))`.
-
-        Returns:
-            The piece covering `offset` and the offset within that piece's string.
-
-        Raises:
-            IndexError: When `offset` is outside `range(len(text))`.
-        """
-        for piece in self.pieces:
-            if piece.offset <= offset < piece.offset + len(piece.string):
-                return piece, offset - piece.offset
-
-        msg = f"offset {offset} is outside the block text"
-        raise IndexError(msg)
+def _block_break(block: XmlElement) -> BreakAfter:
+    # A heading closes with a heading-length gap, any other block a paragraph gap.
+    return BreakAfter.HEADING if block.tag in _HEADING_TAGS else BreakAfter.PARAGRAPH
 
 
 def narratable_blocks(root: XmlElement) -> list[XmlElement]:
@@ -124,19 +102,13 @@ def _blocks_under(element: XmlElement) -> list[XmlElement]:
     return []
 
 
-def extract_block_text(block: XmlElement) -> BlockText:
-    """Flatten a block into its raw narratable text and an offset-to-DOM map."""
-    pieces: list[TextPiece] = []
-    offset = 0
-    for node, is_tail, string in _text_pieces(block):
-        pieces.append(
-            TextPiece(node=node, is_tail=is_tail, offset=offset, string=string)
-        )
-        offset += len(string)
+def extract_block_text(block: XmlElement) -> str:
+    """Flatten a block into its raw narratable text: prose text and tails, in order.
 
-    return BlockText(
-        text="".join(piece.string for piece in pieces), pieces=tuple(pieces)
-    )
+    Segmentation runs on this text; `_segments` independently rebuilds the matching DOM
+    offsets, so the two stay aligned without a shared offset map.
+    """
+    return "".join(string for _, _, string in _text_pieces(block))
 
 
 def _has_narratable_text(element: XmlElement) -> bool:
@@ -233,7 +205,7 @@ def inject_block(block: XmlElement, id_gen: Iterator[str]) -> list[tuple[str, st
         StopIteration: If `id_gen` runs out before every span id is pulled. The pull
             happens before any mutation, so the block is left untouched (atomic no-op).
     """
-    raw_text = extract_block_text(block).text
+    raw_text = extract_block_text(block)
     ranges = split_sentences(raw_text)
     if not ranges:
         return []
@@ -250,11 +222,6 @@ def inject_block(block: XmlElement, id_gen: Iterator[str]) -> list[tuple[str, st
         (span_ids[index], collapse_whitespace(raw_text[start:end]))
         for index, (start, end) in enumerate(units)
     ]
-
-
-_HEADING_TAGS = frozenset(
-    qname(XHTML_NS, tag) for tag in ("h1", "h2", "h3", "h4", "h5", "h6")
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,9 +262,7 @@ def inject(root: XmlElement) -> list[InjectedSpan]:
         spans = inject_block(block, id_gen)
         # Only the block's last span carries the block-level break: a heading closes
         # with a heading gap, any other block a paragraph gap, interior spans plainly.
-        block_break = (
-            BreakAfter.HEADING if block.tag in _HEADING_TAGS else BreakAfter.PARAGRAPH
-        )
+        block_break = _block_break(block)
 
         for index, (span_id, display_text) in enumerate(spans):
             last = index == len(spans) - 1
@@ -522,9 +487,7 @@ def inject_words(root: XmlElement) -> list[WordSentence]:
     counter = count(1)
     injected: list[WordSentence] = []
     for block in narratable_blocks(root):
-        block_break = (
-            BreakAfter.HEADING if block.tag in _HEADING_TAGS else BreakAfter.PARAGRAPH
-        )
+        block_break = _block_break(block)
         injected.extend(_inject_block_words(block, counter, used, block_break))
 
     return injected
@@ -548,7 +511,7 @@ def _inject_block_words(
     used: set[str],
     block_break: BreakAfter,
 ) -> list[WordSentence]:
-    raw_text = extract_block_text(block).text
+    raw_text = extract_block_text(block)
     sentence_ranges = split_sentences(raw_text)
     if not sentence_ranges:
         return []

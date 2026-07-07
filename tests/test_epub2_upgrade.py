@@ -5,11 +5,10 @@ from lxml import etree
 from xhtml_documents import xhtml_document
 
 from spantrack import epub2_upgrade, epub_container, opf
-from spantrack.lxml_reading import XmlElement
+from spantrack.lxml_reading import XHTML_NS, XmlElement
 
 _MODIFIED = "2026-07-03T00:00:00Z"
 
-_XHTML = "http://www.w3.org/1999/xhtml"
 _EPUB = "http://www.idpf.org/2007/ops"
 _OPF = "http://www.idpf.org/2007/opf"
 _DC = "http://purl.org/dc/elements/1.1/"
@@ -110,28 +109,28 @@ def _nav_root(book: Path, package: opf.Package) -> XmlElement:
 def _nav_href_to_label(nav_root: XmlElement, nav_type: str) -> dict[str, str]:
     navs = [
         el
-        for el in nav_root.iter(f"{{{_XHTML}}}nav")
+        for el in nav_root.iter(f"{{{XHTML_NS}}}nav")
         if el.get(f"{{{_EPUB}}}type") == nav_type
     ]
     assert len(navs) == 1
 
     return {
         (anchor.get("href") or ""): (anchor.text or "")
-        for anchor in navs[0].iter(f"{{{_XHTML}}}a")
+        for anchor in navs[0].iter(f"{{{XHTML_NS}}}a")
     }
 
 
 def _landmark_type_to_href(nav_root: XmlElement) -> dict[str, str]:
     navs = [
         el
-        for el in nav_root.iter(f"{{{_XHTML}}}nav")
+        for el in nav_root.iter(f"{{{XHTML_NS}}}nav")
         if el.get(f"{{{_EPUB}}}type") == "landmarks"
     ]
     assert len(navs) == 1
 
     return {
         (anchor.get(f"{{{_EPUB}}}type") or ""): (anchor.get("href") or "")
-        for anchor in navs[0].iter(f"{{{_XHTML}}}a")
+        for anchor in navs[0].iter(f"{{{XHTML_NS}}}a")
     }
 
 
@@ -214,7 +213,7 @@ def test_upgrade_nav_is_wellformed_xhtml(minimal_epub2_path: Path, tmp_path: Pat
     package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
 
     root = _nav_root(book, package)
-    assert root.tag == f"{{{_XHTML}}}html"
+    assert root.tag == f"{{{XHTML_NS}}}html"
 
 
 def test_upgrade_epub3_is_noop(minimal_epub_path: Path, tmp_path: Path):
@@ -370,9 +369,9 @@ def test_landmarks_dedupe_by_type(tmp_path: Path):
     root = _nav_root(book, package)
     covers = [
         anchor
-        for nav in root.iter(f"{{{_XHTML}}}nav")
+        for nav in root.iter(f"{{{XHTML_NS}}}nav")
         if nav.get(f"{{{_EPUB}}}type") == "landmarks"
-        for anchor in nav.iter(f"{{{_XHTML}}}a")
+        for anchor in nav.iter(f"{{{XHTML_NS}}}a")
         if anchor.get(f"{{{_EPUB}}}type") == "cover"
     ]
     assert len(covers) == 1

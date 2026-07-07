@@ -7,6 +7,7 @@ each decision with no silent heuristics. Skipping is driven by `epub:type` landm
 `linear="no"`, and media type.
 """
 
+import enum
 import posixpath
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from spantrack.opf import (
 __all__ = [
     "Document",
     "Excluded",
+    "Reason",
     "Selection",
     "apply_overrides",
     "read_landmarks",
@@ -43,10 +45,29 @@ __all__ = [
 _SKIP_LANDMARKS = frozenset({"cover", "toc", "loi", "lot", "landmarks"})
 _BODYMATTER = "bodymatter"
 
-# Default exclusion reasons that `--include` may override. `landmark:*` reasons are soft
-# too (resurrected by `_is_soft`); structural reasons (nav, non-content,
-# unresolved-item) never are — those documents carry no prose.
-_SOFT_REASONS = frozenset({"non-linear", "front-matter"})
+
+class Reason(enum.StrEnum):
+    """A recorded reason a spine document was left out of the narration set.
+
+    A landmark exclusion is emitted as a `_LANDMARK_PREFIX`-tagged string rather than a
+    member, because its `epub:type` suffix is data, not a fixed value.
+    """
+
+    UNRESOLVED_ITEM = "unresolved-item"
+    NAV = "nav"
+    NON_LINEAR = "non-linear"
+    NON_CONTENT = "non-content"
+    FRONT_MATTER = "front-matter"
+    NOT_PICKED = "not-picked"
+    EXCLUDED = "excluded"
+
+
+_LANDMARK_PREFIX = "landmark:"
+
+# Soft default exclusions that `--include` may override; `landmark:*` reasons are soft
+# too (resurrected by `_is_soft`). Structural reasons never resurrect: those documents
+# carry no prose, so nav/non-content/unresolved-item stay excluded.
+_SOFT_REASONS = frozenset({Reason.NON_LINEAR, Reason.FRONT_MATTER})
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +122,14 @@ def select(package: Package, *, landmarks: Mapping[str, str]) -> Selection:
     for index, spine_item in enumerate(package.spine):
         item = package.item_by_id(spine_item.idref)
         if item is None:
-            excluded.append(Excluded(spine_item.idref, "", "unresolved-item", index))
+            excluded.append(
+                Excluded(
+                    spine_item.idref,
+                    "",
+                    Reason.UNRESOLVED_ITEM,
+                    index,
+                )
+            )
             continue
 
         reason = _exclusion_reason(
@@ -128,19 +156,19 @@ def _exclusion_reason(
     is_front_matter: bool,
 ) -> str | None:
     if item.href == nav_href:
-        return "nav"
+        return Reason.NAV
 
     if not spine_item.linear:
-        return "non-linear"
+        return Reason.NON_LINEAR
 
     if item.media_type != XHTML_MEDIA_TYPE:
-        return "non-content"
+        return Reason.NON_CONTENT
 
     if landmark in _SKIP_LANDMARKS:
-        return f"landmark:{landmark}"
+        return f"{_LANDMARK_PREFIX}{landmark}"
 
     if is_front_matter:
-        return "front-matter"
+        return Reason.FRONT_MATTER
 
     return None
 
@@ -234,7 +262,9 @@ def _apply_pick(entries: list[_Entry], pick: Sequence[str]) -> Selection:
         if entry.href and _matches_any(entry.href, pick):
             documents.append(Document(entry.item_id, entry.href, entry.spine_index))
         else:
-            reason = "not-picked" if entry.href else (entry.reason or "excluded")
+            reason = (
+                Reason.NOT_PICKED if entry.href else entry.reason or Reason.EXCLUDED
+            )
             excluded.append(
                 Excluded(entry.item_id, entry.href, reason, entry.spine_index),
             )
@@ -255,7 +285,7 @@ def _apply_include_exclude(
                 Excluded(
                     entry.item_id,
                     entry.href,
-                    entry.reason or "excluded",
+                    entry.reason or Reason.EXCLUDED,
                     entry.spine_index,
                 ),
             )
@@ -273,7 +303,7 @@ def _apply_include_exclude(
                 Excluded(
                     entry.item_id,
                     entry.href,
-                    reason or "excluded",
+                    reason or Reason.EXCLUDED,
                     entry.spine_index,
                 ),
             )
@@ -293,7 +323,7 @@ def _override_decision(
 ) -> tuple[bool, str | None]:
     if default_reason is None:
         if has_exclude_match:
-            return False, "excluded"
+            return False, Reason.EXCLUDED
 
         return True, None
 
@@ -304,7 +334,7 @@ def _override_decision(
 
 
 def _is_soft(reason: str) -> bool:
-    return reason in _SOFT_REASONS or reason.startswith("landmark:")
+    return reason in _SOFT_REASONS or reason.startswith(_LANDMARK_PREFIX)
 
 
 def _matches(selector: str, href: str, basename: str) -> bool:

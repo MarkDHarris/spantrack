@@ -53,7 +53,7 @@ _FIXER_CONFIG = ftfy.TextFixerConfig(
 # Expand a roman numeral only next to a structural label (or as a whole-string heading),
 # and emit arabic digits. The window is deliberately narrow: a >=2-character numeral
 # after a label leaves the pronoun "I" and single-letter labels (Part C, Appendix D)
-# alone; a canonical + round-trip check rejects loose spellings (IIII, VV, XM) and a
+# alone; a strict canonical-form regex rejects loose spellings (IIII, VV, XM) and a
 # small blocklist rejects valid romans that are English words.
 _LABEL = (
     r"(?:[Cc]hapters?|[Pp]arts?|[Bb]ooks?|[Ss]ections?|[Aa]cts?|[Ss]cenes?"
@@ -61,28 +61,13 @@ _LABEL = (
     r"|[Aa]rticles?|[Tt]itles?|[Cc]hs?\.|[Bb]ks?\.|[Pp]ts?\.|[Ss]ecs?\.|[Aa]pps?\.)"
 )
 _ROMAN_CHARS = "[MDCLXVImdclxvi]"
-# The roman toolkit works together: _ROMAN_STRICT validates the spelling,
-# _ROMAN_VALUES/_ROMAN_TABLE convert between int and numeral for the round-trip
-# canonicality check, and _ROMAN_WORDS blocklists romans that are ordinary words.
+# _ROMAN_STRICT accepts only the one canonical spelling of each value (loose forms like
+# IIII/VV/XM fail it), _ROMAN_VALUES converts a validated numeral to its integer, and
+# _ROMAN_WORDS blocklists romans that are ordinary words.
 _ROMAN_STRICT = re.compile(
     r"M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})"
 )
 _ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
-_ROMAN_TABLE = (
-    (1000, "M"),
-    (900, "CM"),
-    (500, "D"),
-    (400, "CD"),
-    (100, "C"),
-    (90, "XC"),
-    (50, "L"),
-    (40, "XL"),
-    (10, "X"),
-    (9, "IX"),
-    (5, "V"),
-    (4, "IV"),
-    (1, "I"),
-)
 # Canonical romans that are also common English words or codes -- never expanded.
 _ROMAN_WORDS = frozenset(
     {"MIX", "DID", "DIM", "MID", "LID", "CIVIC", "MIC", "DI", "CI", "MI", "MM"}
@@ -101,27 +86,17 @@ def _roman_to_int(numeral: str) -> int:
     return total
 
 
-def _int_to_roman(number: int) -> str:
-    parts: list[str] = []
-    for value, symbol in _ROMAN_TABLE:
-        while number >= value:
-            parts.append(symbol)
-            number -= value
-
-    return "".join(parts)
-
-
 def _roman_to_arabic(numeral: str) -> str | None:
-    """Return the arabic form of a canonical, non-word roman numeral, else None."""
+    """Return the arabic form of a canonical, non-word roman numeral, else None.
+
+    `_ROMAN_STRICT` matches only the single canonical spelling of each value, so a loose
+    form (IIII, VV, XM) fails the guard outright -- no separate round-trip check needed.
+    """
     upper = numeral.upper()
     if upper in _ROMAN_WORDS or not _ROMAN_STRICT.fullmatch(upper):
         return None
 
-    value = _roman_to_int(upper)
-    if _int_to_roman(value) != upper:  # reject non-canonical spellings (IIII, VV, XM)
-        return None
-
-    return str(value)
+    return str(_roman_to_int(upper))
 
 
 _ROMAN_HEADING = re.compile(r"^(" + _ROMAN_CHARS + r"{2,})(\.\s|\s*$)")

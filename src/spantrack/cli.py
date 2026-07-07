@@ -15,6 +15,8 @@ from spantrack.run_config import (
     parse_bitrate,
 )
 
+__all__ = ["build_parser", "main", "parse_args"]
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the `spantrack` command."""

@@ -13,6 +13,13 @@ from typing import Protocol, Self, TextIO, cast
 from spantrack.narration_projection import SelectionProjection
 from spantrack.narration_set import Selection
 
+__all__ = [
+    "ChapterProgress",
+    "ProgressBarUnavailableError",
+    "ProgressReporter",
+    "ensure_tqdm_available",
+]
+
 
 class ProgressBarUnavailableError(RuntimeError):
     """Raised when a progress bar is requested but the optional tqdm dep is absent."""

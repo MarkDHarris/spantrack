@@ -473,11 +473,27 @@ def test_resume_reuses_encoded_audio_without_re_encoding(
     assert _first_mp3_bytes(config.output, tmp_path / "r2") == first_output
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
-@pytest.mark.skipif(
+_requires_epubcheck = pytest.mark.skipif(
     not HAS_FFMPEG or not _EPUBCHECK_JAR.is_file() or _java_executable() is None,
     reason="acceptance needs ffmpeg + epubcheck jar + java",
 )
+
+
+def _assert_epubcheck_clean(output: Path) -> None:
+    java = _java_executable()
+    assert java is not None
+    completed = subprocess.run(
+        [java, "-jar", str(_EPUBCHECK_JAR), str(output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # epubcheck exits 0 only when there are no errors or fatals (warnings are allowed).
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@_requires_epubcheck
 @pytest.mark.parametrize("granularity", ["sentence", "word"])
 @pytest.mark.parametrize("fixture_name", ["minimal_epub_path", "minimal_epub2_path"])
 def test_narrated_output_is_epubcheck_clean(
@@ -494,23 +510,10 @@ def test_narrated_output_is_epubcheck_clean(
 
     assert pipeline.run(config) == 0
 
-    java = _java_executable()
-    assert java is not None
-    completed = subprocess.run(
-        [java, "-jar", str(_EPUBCHECK_JAR), str(config.output)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    # epubcheck exits 0 only when there are no errors or fatals (warnings are allowed).
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    _assert_epubcheck_clean(config.output)
 
 
-@pytest.mark.skipif(
-    not HAS_FFMPEG or not _EPUBCHECK_JAR.is_file() or _java_executable() is None,
-    reason="acceptance needs ffmpeg + epubcheck jar + java",
-)
+@_requires_epubcheck
 @pytest.mark.parametrize("fixture_name", ["minimal_epub_path", "minimal_epub2_path"])
 def test_opus_output_is_epubcheck_clean(
     fixture_name: str,
@@ -531,16 +534,7 @@ def test_opus_output_is_epubcheck_clean(
     opf_text = next(result.rglob("*.opf")).read_text(encoding="utf-8")
     assert "audio/ogg; codecs=opus" in opf_text  # declared as the Opus core media type
 
-    java = _java_executable()
-    assert java is not None
-
-    completed = subprocess.run(
-        [java, "-jar", str(_EPUBCHECK_JAR), str(config.output)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    _assert_epubcheck_clean(config.output)
 
 
 def test_millisecond_clock_collapses_sub_millisecond_clips():

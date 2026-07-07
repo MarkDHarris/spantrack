@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -6,13 +6,13 @@ import pytest
 from spantrack import epubcheck
 
 
-def _recording_runner(
+def _stub_runner(
     returncode: int,
     stdout: str = "",
     stderr: str = "",
-) -> Callable[..., epubcheck.CompletedCommand]:
-    def run(command: list[str]):
-        run.command = command  # pyright: ignore[reportFunctionMemberAccess]
+) -> Callable[[Sequence[str]], epubcheck.CompletedCommand]:
+    def run(command: Sequence[str]) -> epubcheck.CompletedCommand:
+        _ = command
         return epubcheck.CompletedCommand(
             returncode=returncode,
             stdout=stdout,
@@ -23,7 +23,7 @@ def _recording_runner(
 
 
 def test_validate_ok_on_exit_zero(tmp_path: Path):
-    run = _recording_runner(0, stdout="No errors or warnings detected.\n")
+    run = _stub_runner(0, stdout="No errors or warnings detected.\n")
     result = epubcheck.validate(
         tmp_path / "book.epub",
         locate=lambda _: "epubcheck",
@@ -36,7 +36,7 @@ def test_validate_ok_on_exit_zero(tmp_path: Path):
 
 def test_validate_reports_errors_on_nonzero(tmp_path: Path):
     stderr = "ERROR(RSC-005): content.opf(2,10): missing required attribute\n"
-    run = _recording_runner(1, stderr=stderr)
+    run = _stub_runner(1, stderr=stderr)
     result = epubcheck.validate(
         tmp_path / "book.epub",
         locate=lambda _: "epubcheck",
@@ -49,12 +49,16 @@ def test_validate_reports_errors_on_nonzero(tmp_path: Path):
 
 
 def test_validate_invokes_epubcheck_with_resolved_path(tmp_path: Path):
-    run = _recording_runner(0)
+    commands: list[list[str]] = []
     epub = tmp_path / "book.epub"
+
+    def run(command: Sequence[str]) -> epubcheck.CompletedCommand:
+        commands.append(list(command))
+        return epubcheck.CompletedCommand(returncode=0, stdout="", stderr="")
 
     epubcheck.validate(epub, locate=lambda _: "/usr/bin/epubcheck", runner=run)
 
-    assert run.command == ["/usr/bin/epubcheck", str(epub)]  # pyright: ignore[reportFunctionMemberAccess]
+    assert commands == [["/usr/bin/epubcheck", str(epub)]]
 
 
 def test_validate_raises_when_binary_absent(tmp_path: Path):
@@ -63,7 +67,7 @@ def test_validate_raises_when_binary_absent(tmp_path: Path):
 
 
 def test_collects_severity_lines_from_both_streams_and_drops_noise(tmp_path: Path):
-    run = _recording_runner(
+    run = _stub_runner(
         1,
         stdout="Validating using EPUB version 3.3 rules.\nWARNING(OPF-096): dated\n",
         stderr="ERROR(RSC-005): missing attr\nCheck finished with 2 messages\n",

@@ -51,11 +51,11 @@ class BreakAfter(enum.StrEnum):
     HEADING = "heading"
 
 
-# Inter-sentence pause per break type, folded into the preceding clip.
-_GAP_MS: dict[BreakAfter, int] = {
-    BreakAfter.SENTENCE: 250,
-    BreakAfter.PARAGRAPH: 600,
-    BreakAfter.HEADING: 900,
+# Inter-sentence pause per break type, in samples, folded into the preceding clip.
+_GAP_SAMPLES: dict[BreakAfter, int] = {
+    BreakAfter.SENTENCE: round(250 / 1000 * SAMPLE_RATE),
+    BreakAfter.PARAGRAPH: round(600 / 1000 * SAMPLE_RATE),
+    BreakAfter.HEADING: round(900 / 1000 * SAMPLE_RATE),
 }
 
 # Linear fade applied to each unit's leading and trailing edge to suppress join clicks.
@@ -105,7 +105,7 @@ def assemble(units: Sequence[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
         # The gap belongs to this clip (gapless), so extend the clip past it; the final
         # unit gets none, so the chapter never ends on trailing silence.
         if index != last:
-            gap = round(_GAP_MS[break_after] / 1000 * SAMPLE_RATE)
+            gap = _GAP_SAMPLES[break_after]
             segments.append(np.zeros(gap, dtype=np.float32))
             cursor += gap
 

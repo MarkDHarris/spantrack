@@ -7,6 +7,7 @@ from lxml import etree
 
 from spantrack.lxml_reading import (
     XHTML_NS,
+    join_fragment,
     parse_xml_file,
     parse_xml_file_or_none,
     qname,
@@ -27,6 +28,28 @@ from spantrack.lxml_reading import (
 )
 def test_split_fragment(href: str, expected: tuple[str, str]):
     assert split_fragment(href) == expected
+
+
+@pytest.mark.parametrize(
+    ("path", "fragment", "expected"),
+    [
+        ("OEBPS/ch1.xhtml", "s01", "OEBPS/ch1.xhtml#s01"),
+        ("OEBPS/ch1.xhtml", "", "OEBPS/ch1.xhtml"),  # empty fragment: no bare '#'
+        ("", "frag", "#frag"),
+    ],
+)
+def test_join_fragment(path: str, fragment: str, expected: str):
+    assert join_fragment(path, fragment) == expected
+
+
+@pytest.mark.parametrize(
+    "href",
+    ["OEBPS/ch1.xhtml#s01", "OEBPS/ch1.xhtml", "#frag", "a#b#c"],
+)
+def test_join_fragment_inverts_split_fragment(href: str):
+    # join_fragment is the inverse of split_fragment for any href without a bare
+    # trailing '#'; two OPF-rewriting stages lean on that round-trip.
+    assert join_fragment(*split_fragment(href)) == href
 
 
 def test_parse_xml_file_or_none_parses_valid(tmp_path: Path):

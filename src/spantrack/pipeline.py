@@ -1,15 +1,15 @@
 """Sequence the conversion stages and hand artifacts between them.
 
-`pipeline` is the sole cross-stage importer: it drives ingest -> upgrade -> selection ->
-per-chapter narration -> OPF/CSS patching -> repack, keeping every other module unaware
-of its neighbours.
+`pipeline` is the sole orchestrator: it drives ingest -> upgrade -> selection ->
+per-chapter narration -> OPF/CSS patching -> repack. Sibling modules share small types
+and helpers with one another, but none of them sequences the stages.
 """
 
 import importlib.metadata
 import posixpath
 import shutil
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -49,9 +49,22 @@ from spantrack.run_config import (
 )
 from spantrack.sentence_cache import SentenceCache
 from spantrack.tts import kokoro_backend
-from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
+from spantrack.tts.backend import (
+    SAMPLE_RATE,
+    Pcm,
+    Synthesis,
+    TokenTimestamp,
+    shift_tokens,
+)
 
-__all__ = ["run"]
+__all__ = [
+    "DocumentTargets",
+    "NarrationContext",
+    "NarrationResult",
+    "UntimedNarrationError",
+    "narrate_document",
+    "run",
+]
 
 BOOK_SUBDIR = "book"
 _CSS_MEDIA_TYPE = "text/css"
@@ -79,10 +92,7 @@ class _NarrationBackend(Protocol):
 
     def apply_lexicon(self, text: str, lexicon: Lexicon) -> str: ...
 
-    def synthesize(
-        self,
-        text: str,
-    ) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]: ...
+    def synthesize(self, text: str) -> Synthesis: ...
 
 
 type BackendFactory = Callable[[RunConfig], _NarrationBackend]
@@ -137,11 +147,7 @@ class _BuildLayout:
 
 @dataclass(frozen=True, slots=True)
 class _ChapterPaths:
-    audio_path: Path
-    smil_path: Path
-    sidecar_path: Path
-    doc_href_rel_smil: str
-    audio_href_rel_smil: str
+    targets: DocumentTargets
     css_href_rel_doc: str
     audio_opf_href: str
     smil_opf_href: str
@@ -293,17 +299,7 @@ def _narrate_chapter(
 
     duration_s = _reuse_duration(state, paths, document)
     if duration_s is None:
-        result = narrate_document(
-            context,
-            root,
-            DocumentTargets(
-                doc_href=paths.doc_href_rel_smil,
-                audio_href=paths.audio_href_rel_smil,
-                audio_path=paths.audio_path,
-                smil_path=paths.smil_path,
-                sidecar_path=paths.sidecar_path,
-            ),
-        )
+        result = narrate_document(context, root, paths.targets)
         if result.sentence_count == 0:
             return None
 
@@ -348,11 +344,13 @@ def _chapter_paths(
     opf_base = layout.opf_dir or "."
 
     return _ChapterPaths(
-        audio_path=layout.container_root / audio_container,
-        smil_path=layout.container_root / smil_container,
-        sidecar_path=layout.sidecars_dir / f"{stem}.tokens.json",
-        doc_href_rel_smil=posixpath.basename(document.href),
-        audio_href_rel_smil=posixpath.relpath(audio_container, doc_base),
+        targets=DocumentTargets(
+            doc_href=posixpath.basename(document.href),
+            audio_href=posixpath.relpath(audio_container, doc_base),
+            audio_path=layout.container_root / audio_container,
+            smil_path=layout.container_root / smil_container,
+            sidecar_path=layout.sidecars_dir / f"{stem}.tokens.json",
+        ),
         css_href_rel_doc=posixpath.relpath(css_container, doc_base),
         audio_opf_href=posixpath.relpath(audio_container, opf_base),
         smil_opf_href=posixpath.relpath(smil_container, opf_base),
@@ -396,7 +394,7 @@ def narrate_document(
                 display_text=span.display_text,
                 normalized_text=synth.normalized_text,
                 cache_key=synth.cache_key,
-                tokens=_shift_tokens(synth.tokens, clip.clip_begin_s),
+                tokens=shift_tokens(synth.tokens, clip.clip_begin_s),
             ),
         )
         # Drop a zero-duration clip: a sentence trimmed to silence (typically the final
@@ -431,15 +429,9 @@ def _synthesize_text(context: NarrationContext, display_text: str) -> _Synthesis
         if context.lexicon is not None
         else normalized
     )
-    pcm, tokens = synthesis.synthesize_sentence(
+    cache_key, pcm, tokens = synthesis.synthesize_sentence(
         context.backend,
         context.cache,
-        synth_text,
-    )
-    cache_key = context.cache.key(
-        context.backend.model_version,
-        context.backend.voice,
-        context.backend.speed,
         synth_text,
     )
 
@@ -537,7 +529,7 @@ def _narrate_words(
     for sentence, synth, clip in zip(
         sentences, synthesized, chapter.clips, strict=True
     ):
-        tokens = _shift_tokens(synth.tokens, clip.clip_begin_s)
+        tokens = shift_tokens(synth.tokens, clip.clip_begin_s)
         pars, source_ranges = _word_pars(context, sentence, tokens, clip)
         smil_units.extend(pars)
         sidecar_sentences.append(
@@ -627,15 +619,15 @@ def _reuse_duration(
     # still parses -- a stale/incompatible sidecar re-narrates rather than crashing.
     persisted = (
         state.is_done(document.href)
-        and paths.audio_path.is_file()
-        and paths.smil_path.is_file()
-        and paths.sidecar_path.is_file()
+        and paths.targets.audio_path.is_file()
+        and paths.targets.smil_path.is_file()
+        and paths.targets.sidecar_path.is_file()
     )
     if not persisted:
         return None
 
     try:
-        return chapter_sidecar.read(paths.sidecar_path).audio.duration_s
+        return chapter_sidecar.read(paths.targets.sidecar_path).audio.duration_s
     except chapter_sidecar.SidecarError:
         return None
 
@@ -670,19 +662,6 @@ def _write_sidecar(
         sentences=tuple(sentences),
     )
     chapter_sidecar.write(targets.sidecar_path, sidecar)
-
-
-def _shift_tokens(
-    tokens: tuple[TokenTimestamp, ...] | None,
-    offset: float,
-) -> tuple[TokenTimestamp, ...] | None:
-    if tokens is None:
-        return None
-
-    return tuple(
-        replace(token, start_s=token.start_s + offset, end_s=token.end_s + offset)
-        for token in tokens
-    )
 
 
 def _load_lexicon(config: RunConfig, backend: _NarrationBackend) -> Lexicon | None:

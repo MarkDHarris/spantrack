@@ -73,13 +73,15 @@ def test_cache_miss_synthesizes_trims_and_stores(tmp_path: Path):
     backend = _FakeBackend(_padded_signal(), tokens)
     cache = SentenceCache(root=tmp_path)
 
-    pcm, out_tokens = synthesize_sentence(backend, cache, "hi")
+    returned_key, pcm, out_tokens = synthesize_sentence(backend, cache, "hi")
 
     assert backend.calls == 1
     assert len(pcm) == 12_000  # leading + trailing silence trimmed
-    # Timestamps shift earlier by the trimmed lead (0.5 s).
+    # Timestamps shift earlier by the trimmed lead (0.5s).
     assert out_tokens == (TokenTimestamp("hi", 0.0, 0.5, ""),)
+
     key = SentenceCache.key("kokoro-test", "af_heart", 1.0, "hi")
+    assert returned_key == key  # the key is returned so callers skip re-deriving it
     assert cache.get(key) is not None
 
 
@@ -95,7 +97,7 @@ def test_cache_hit_skips_backend(tmp_path: Path):
 
 def test_resume_returns_byte_identical_cached_audio(tmp_path: Path):
     tokens = (TokenTimestamp("hi", 0.5, 1.0, ""),)
-    first_pcm, _ = synthesize_sentence(
+    _, first_pcm, _ = synthesize_sentence(
         _FakeBackend(_padded_signal(), tokens),
         SentenceCache(root=tmp_path),
         "hi",
@@ -104,7 +106,7 @@ def test_resume_returns_byte_identical_cached_audio(tmp_path: Path):
     # Simulate a restart: a fresh cache + a backend with the same identity but different
     # audio. A correct resume returns the stored audio and never calls the backend.
     resumed = _FakeBackend(np.full(24_000, 0.9, dtype=np.float32), tokens)
-    second_pcm, _ = synthesize_sentence(resumed, SentenceCache(root=tmp_path), "hi")
+    _, second_pcm, _ = synthesize_sentence(resumed, SentenceCache(root=tmp_path), "hi")
 
     assert resumed.calls == 0
     assert np.array_equal(second_pcm, first_pcm)
@@ -112,14 +114,14 @@ def test_resume_returns_byte_identical_cached_audio(tmp_path: Path):
 
 def test_none_tokens_pass_through(tmp_path: Path):
     backend = _FakeBackend(_padded_signal(), None)
-    _, tokens = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
+    _, _, tokens = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
 
     assert tokens is None
 
 
 def test_all_silence_trims_to_empty(tmp_path: Path):
     backend = _FakeBackend(np.zeros(8_000, dtype=np.float32), None)
-    pcm, _ = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
+    _, pcm, _ = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
 
     assert len(pcm) == 0
 
@@ -130,7 +132,11 @@ def test_all_silence_drops_stale_timestamps(tmp_path: Path):
     # audio (they would describe time ranges the output no longer contains).
     tokens = (TokenTimestamp("hi", 0.0, 0.5, ""),)
     backend = _FakeBackend(np.zeros(8_000, dtype=np.float32), tokens)
-    pcm, out_tokens = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
+    _, pcm, out_tokens = synthesize_sentence(
+        backend,
+        SentenceCache(root=tmp_path),
+        "hi",
+    )
 
     assert len(pcm) == 0
     assert out_tokens == ()
@@ -143,7 +149,11 @@ def test_no_leading_silence_keeps_timestamps_unshifted(tmp_path: Path):
     tokens = (TokenTimestamp("hi", 0.0, 0.5, ""),)
     backend = _FakeBackend(_leading_signal(), tokens)
 
-    pcm, out_tokens = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
+    _, pcm, out_tokens = synthesize_sentence(
+        backend,
+        SentenceCache(root=tmp_path),
+        "hi",
+    )
 
     assert len(pcm) == 12_000  # trailing silence trimmed; nothing to trim at the lead
     assert out_tokens == tokens  # unshifted, since lead == 0

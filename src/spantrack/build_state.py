@@ -12,7 +12,7 @@ clean start rather than an error (unlike `chapter_sidecar`).
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -70,14 +70,7 @@ def save(path: Path, state: BuildState) -> None:
     """Write `state` to `path` as deterministic JSON via an atomic temp + replace."""
     payload = {
         "schema_version": _SCHEMA_VERSION,
-        "parameters": {
-            "voice": state.parameters.voice,
-            "speed": state.parameters.speed,
-            "granularity": state.parameters.granularity,
-            "audio_format": state.parameters.audio_format,
-            "bitrate": state.parameters.bitrate,
-            "selection": list(state.parameters.selection),
-        },
+        "parameters": asdict(state.parameters),
         "completed": sorted(state.completed),
     }
     path.parent.mkdir(parents=True, exist_ok=True)

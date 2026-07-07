@@ -69,6 +69,14 @@ def test_selection_flags_collect_into_tuples():
     assert config.pick == ("a.xhtml", "b.xhtml", "c.xhtml")
 
 
+def test_pick_drops_empty_comma_parts():
+    # `if part` drops empty parts from the comma-split, so a doubled or trailing comma
+    # never yields a "" selector that would match every document.
+    config = cli.parse_args(["book.epub", "--pick", "a.xhtml,,b.xhtml,"])
+
+    assert config.pick == ("a.xhtml", "b.xhtml")
+
+
 def test_lang_en_gb_maps_to_code_b():
     assert cli.parse_args(["book.epub", "--lang", "en-gb"]).lang_code == "b"
 

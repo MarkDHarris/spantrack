@@ -6,6 +6,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+__all__ = [
+    "CompletedCommand",
+    "EpubcheckNotFoundError",
+    "EpubcheckResult",
+    "validate",
+]
+
 DEFAULT_EXECUTABLE = "epubcheck"
 _MESSAGE_PREFIXES = ("FATAL", "ERROR", "WARNING")
 

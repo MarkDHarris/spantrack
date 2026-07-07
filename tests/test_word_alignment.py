@@ -6,7 +6,7 @@ from itertools import pairwise
 import pytest
 
 from spantrack.tts.backend import TokenTimestamp
-from spantrack.word_alignment import align, segment_words
+from spantrack.word_alignment import AlignedSentence, align, segment_words
 
 
 def _triples(text: str) -> list[tuple[str, int, int]]:
@@ -78,8 +78,8 @@ def _tok(text: str, start: float, end: float) -> TokenTimestamp:
     return TokenTimestamp(text=text, start_s=start, end_s=end, whitespace=" ")
 
 
-def _ranges(result: object) -> list[tuple[int, int]]:
-    return [(clip.span.start, clip.span.end) for clip in result.words]  # type: ignore[attr-defined]
+def _ranges(result: AlignedSentence) -> list[tuple[int, int]]:
+    return [(clip.span.start, clip.span.end) for clip in result.words]
 
 
 def test_aligns_one_token_per_word_with_gapless_clips():
@@ -90,14 +90,13 @@ def test_aligns_one_token_per_word_with_gapless_clips():
 
     assert _ranges(result) == [(0, 3), (4, 7), (8, 11)]
     bounds = [(clip.clip_begin_s, clip.clip_end_s) for clip in result.words]
-    assert all(
-        math.isclose(a, b)
-        for (a, b) in zip(
-            [x for pair in bounds for x in pair],
-            [0.0, 0.4, 0.4, 0.8, 0.8, 1.2],
-            strict=True,
-        )
-    )
+    for (begin, end), (exp_begin, exp_end) in zip(
+        bounds,
+        [(0.0, 0.4), (0.4, 0.8), (0.8, 1.2)],
+        strict=True,
+    ):
+        assert math.isclose(begin, exp_begin)
+        assert math.isclose(end, exp_end)
     # Every token maps to the word it spoke.
     assert result.source_ranges == ((0, 3), (4, 7), (8, 11))
 

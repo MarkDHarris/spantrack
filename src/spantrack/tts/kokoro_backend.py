@@ -28,7 +28,7 @@ from numpy.typing import NDArray
 
 from spantrack.lexicon import Lexicon
 from spantrack.run_config import Device, RunConfig
-from spantrack.tts.backend import SAMPLE_RATE, Pcm, TokenTimestamp
+from spantrack.tts.backend import SAMPLE_RATE, Pcm, Synthesis, TokenTimestamp
 
 __all__ = ["KokoroBackend", "KokoroBackendError", "build"]
 
@@ -58,7 +58,7 @@ class _Audio(Protocol):
 class _Token(Protocol):
     """One of Kokoro's `MToken`s, as yielded by the pipeline.
 
-    `start_ts`/`end_ts` mirror misaki's own field names (seconds); `_shift_tokens`
+    `start_ts`/`end_ts` mirror misaki's own field names (seconds); `_timed_tokens`
     reads them off the real token at runtime, so they must not be renamed to the `_s`
     suffix used by `TokenTimestamp`.
     """
@@ -175,7 +175,7 @@ class KokoroBackend:
 
         return _WORD.sub(override, text)
 
-    def synthesize(self, text: str) -> tuple[Pcm, tuple[TokenTimestamp, ...] | None]:
+    def synthesize(self, text: str) -> Synthesis:
         """Synthesize `text` to 24 kHz float32 PCM with per-token timestamps.
 
         Kokoro chunks text longer than 510 phoneme tokens internally; this concatenates
@@ -190,7 +190,7 @@ class KokoroBackend:
                 continue
 
             pcm = np.asarray(audio.detach().cpu().numpy(), dtype=np.float32)
-            tokens.extend(_shift_tokens(result.tokens or (), offset))
+            tokens.extend(_timed_tokens(result.tokens or (), offset))
             chunks.append(pcm)
             offset += len(pcm) / SAMPLE_RATE
 
@@ -198,7 +198,7 @@ class KokoroBackend:
         return merged, tuple(tokens)
 
 
-def _shift_tokens(
+def _timed_tokens(
     tokens: Sequence[_Token],
     offset: float,
 ) -> Iterator[TokenTimestamp]:

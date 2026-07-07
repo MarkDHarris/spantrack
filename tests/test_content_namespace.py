@@ -7,8 +7,7 @@ from spantrack.content_namespace import (
     ContentNamespaceError,
     require_xhtml_namespace,
 )
-
-_XHTML = "http://www.w3.org/1999/xhtml"
+from spantrack.lxml_reading import XHTML_NS
 
 
 def _write(root: Path, name: str, markup: str) -> None:
@@ -23,7 +22,7 @@ def test_xhtml_document_passes(tmp_path: Path):
     _write(
         tmp_path,
         "ch.xhtml",
-        f'<html xmlns="{_XHTML}"><head><title>t</title></head>'
+        f'<html xmlns="{XHTML_NS}"><head><title>t</title></head>'
         "<body><p>Hello.</p></body></html>",
     )
 
@@ -69,7 +68,7 @@ def test_inline_foreign_namespace_does_not_raise(tmp_path: Path):
     _write(
         tmp_path,
         "ch.xhtml",
-        f'<html xmlns="{_XHTML}"><body><p>Real.</p>'
+        f'<html xmlns="{XHTML_NS}"><body><p>Real.</p>'
         '<svg xmlns="http://www.w3.org/2000/svg"><text>x</text></svg>'
         '<p xmlns="http://example.com/ns">foreign</p>'
         "</body></html>",
@@ -95,7 +94,7 @@ def test_offending_document_is_named_among_valid_ones(tmp_path: Path):
     _write(
         tmp_path,
         "ok.xhtml",
-        f'<html xmlns="{_XHTML}"><body><p>Fine.</p></body></html>',
+        f'<html xmlns="{XHTML_NS}"><body><p>Fine.</p></body></html>',
     )
     _write(tmp_path, "bad.xhtml", "<html><body><p>Bad.</p></body></html>")
 
