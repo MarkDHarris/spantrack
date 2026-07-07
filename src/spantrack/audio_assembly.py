@@ -80,7 +80,7 @@ class AssembledChapter:
     duration_s: float
 
 
-def assemble(units: list[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
+def assemble(units: Sequence[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
     """Concatenate per-sentence PCM into a chapter with gaps, fades, and clip offsets.
 
     Args:
@@ -112,7 +112,7 @@ def assemble(units: list[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
         clips.append(ClipInterval(begin / SAMPLE_RATE, cursor / SAMPLE_RATE))
 
     pcm = (
-        np.concatenate(segments).astype(np.float32, copy=False)
+        np.concatenate(segments).astype(np.float32, copy=False)  # pyright: ignore[reportUnknownMemberType]
         if segments
         else np.zeros(0, dtype=np.float32)
     )
@@ -122,11 +122,12 @@ def assemble(units: list[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
 
 
 def _edge_fade(pcm: Pcm) -> Pcm:
-    """Return a copy of `pcm` with a linear fade on its leading and trailing edge.
+    """Fade `pcm`'s leading and trailing edge on a copy; too-short units pass through.
 
     The fade shrinks to half the unit when it is shorter than two fade windows, so the
-    ramps never overlap and a one-sample unit stays finite. The input is copied because
-    it is the cached sentence audio, which must not be mutated in place.
+    ramps never overlap. A unit too short to fade (`fade == 0`, i.e. 0-1 samples) is
+    returned unchanged; otherwise the fade is applied to a copy, since the cached
+    sentence audio must never be mutated in place.
     """
     fade = min(_FADE_SAMPLES, len(pcm) // 2)
     if fade == 0:

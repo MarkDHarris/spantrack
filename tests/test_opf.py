@@ -364,7 +364,7 @@ def test_patch_raises_for_unknown_content_item(tmp_path: Path):
         1.0,
     )
 
-    with pytest.raises(opf.OpfError, match="missing"):
+    with pytest.raises(opf.OpfError, match="no manifest item"):
         opf.patch_opf_media_overlays(
             root / "content.opf",
             [unknown],

@@ -5,6 +5,7 @@ from itertools import count, pairwise
 import pytest
 from lxml import etree
 from segmentation_oracle import syntok_sentence_count
+from xhtml_documents import parse_body as _parse
 
 from spantrack.audio_assembly import BreakAfter
 from spantrack.lxml_reading import XHTML_NS, XmlElement, hardened_parser, qname
@@ -18,15 +19,6 @@ from spantrack.sentence_spans import (
 )
 
 _XHTML = "http://www.w3.org/1999/xhtml"
-
-
-def _parse(body: str) -> XmlElement:
-    doc = (
-        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
-        f'<html xmlns="{_XHTML}"><head><title>t</title></head>'
-        f"<body>{body}</body></html>"
-    )
-    return etree.fromstring(doc.encode(), hardened_parser())
 
 
 def _local(element: XmlElement) -> str:

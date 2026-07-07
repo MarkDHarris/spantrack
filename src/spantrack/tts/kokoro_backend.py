@@ -194,11 +194,7 @@ class KokoroBackend:
             chunks.append(pcm)
             offset += len(pcm) / SAMPLE_RATE
 
-        merged = (
-            np.concatenate(chunks).astype(np.float32, copy=False)
-            if chunks
-            else np.zeros(0, dtype=np.float32)
-        )
+        merged = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
         return merged, tuple(tokens)
 
 

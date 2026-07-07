@@ -3,18 +3,13 @@ from pathlib import Path
 
 import pytest
 from narration_documents import make_document as _doc
+from xhtml_documents import write_xhtml
 
 from spantrack import narration_projection
 
 
 def _write_doc(root: Path, name: str, text: str) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    (root / name).write_text(
-        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
-        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
-        f"<body><p>{text}</p></body></html>",
-        encoding="utf-8",
-    )
+    write_xhtml(root, name, f"<p>{text}</p>")
 
 
 def test_counts_characters_across_documents(tmp_path: Path):
@@ -47,13 +42,7 @@ def test_per_document_character_counts(tmp_path: Path):
 
 def test_collapses_markup_whitespace(tmp_path: Path):
     book = tmp_path / "book"
-    (book).mkdir(parents=True)
-    (book / "a.xhtml").write_text(
-        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
-        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
-        "<body>\n  <p>Hello\n     there.</p>\n</body></html>",
-        encoding="utf-8",
-    )
+    write_xhtml(book, "a.xhtml", "\n  <p>Hello\n     there.</p>\n")
 
     projection = narration_projection.project(book, [_doc("a.xhtml")], bitrate="64k")
 
@@ -62,13 +51,10 @@ def test_collapses_markup_whitespace(tmp_path: Path):
 
 def test_ignores_script_and_style(tmp_path: Path):
     book = tmp_path / "book"
-    book.mkdir(parents=True)
-    (book / "a.xhtml").write_text(
-        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
-        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
-        "<body><style>p{color:red}</style><p>Read me.</p>"
-        "<script>alert(1)</script></body></html>",
-        encoding="utf-8",
+    write_xhtml(
+        book,
+        "a.xhtml",
+        "<style>p{color:red}</style><p>Read me.</p><script>alert(1)</script>",
     )
 
     projection = narration_projection.project(book, [_doc("a.xhtml")], bitrate="64k")

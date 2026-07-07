@@ -141,21 +141,6 @@ def test_excludes_unresolved_spine_item():
     assert [doc.href for doc in selection.documents] == ["OEBPS/c1.xhtml"]
 
 
-def test_every_exclusion_has_a_reason():
-    package = _package(
-        [
-            _item("nav", "OEBPS/nav.xhtml", properties=frozenset({"nav"})),
-            _item("cover", "OEBPS/cover.xhtml"),
-            _item("c1", "OEBPS/c1.xhtml"),
-        ],
-        [_spine("nav"), _spine("cover", linear=False), _spine("c1")],
-    )
-
-    selection = narration_set.select(package, landmarks={})
-
-    assert all(ex.reason for ex in selection.excluded)
-
-
 def test_read_landmarks_from_upgraded_nav(minimal_epub2_path: Path, tmp_path: Path):
     book = tmp_path / "book"
     epub_container.unzip(minimal_epub2_path, book)

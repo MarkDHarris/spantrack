@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import HAS_FFMPEG
 from numpy.typing import NDArray
 
 from spantrack import (
@@ -99,13 +100,10 @@ class _UntimedStub(_StubBackend):
 @pytest.fixture
 def stub_synthesis(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace the real Kokoro build with a weightless stub; skip without ffmpeg."""
-    if shutil.which("ffmpeg") is None:
+    if not HAS_FFMPEG:
         pytest.skip("ffmpeg not installed")
 
-    def _build(_config: RunConfig) -> _StubBackend:
-        return _StubBackend()
-
-    monkeypatch.setattr(kokoro_backend, "build", _build)
+    monkeypatch.setattr(kokoro_backend, "build", _stub_build)
 
 
 @pytest.mark.usefixtures("stub_synthesis")
@@ -184,6 +182,10 @@ def test_word_granularity_wraps_words_and_references_them_in_smil(
     assert "media-overlay" in next(result.rglob("*.opf")).read_text(encoding="utf-8")
 
 
+def _stub_build(_config: RunConfig) -> _StubBackend:
+    return _StubBackend()
+
+
 def _untimed_stub(_config: RunConfig) -> _UntimedStub:
     return _UntimedStub()
 
@@ -194,7 +196,7 @@ def test_word_mode_without_timestamps_fails_loud_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if shutil.which("ffmpeg") is None:
+    if not HAS_FFMPEG:
         pytest.skip("ffmpeg not installed")
     monkeypatch.setattr(kokoro_backend, "build", _untimed_stub)
     config = _config(minimal_epub_path, tmp_path, "--granularity", "word")
@@ -209,7 +211,7 @@ def test_word_mode_without_timestamps_falls_back_with_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if shutil.which("ffmpeg") is None:
+    if not HAS_FFMPEG:
         pytest.skip("ffmpeg not installed")
     monkeypatch.setattr(kokoro_backend, "build", _untimed_stub)
     config = _config(
@@ -473,9 +475,7 @@ def test_resume_reuses_encoded_audio_without_re_encoding(
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
 @pytest.mark.skipif(
-    shutil.which("ffmpeg") is None
-    or not _EPUBCHECK_JAR.is_file()
-    or _java_executable() is None,
+    not HAS_FFMPEG or not _EPUBCHECK_JAR.is_file() or _java_executable() is None,
     reason="acceptance needs ffmpeg + epubcheck jar + java",
 )
 @pytest.mark.parametrize("granularity", ["sentence", "word"])
@@ -487,10 +487,7 @@ def test_narrated_output_is_epubcheck_clean(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    def _build(_config: RunConfig) -> _StubBackend:
-        return _StubBackend()
-
-    monkeypatch.setattr(kokoro_backend, "build", _build)
+    monkeypatch.setattr(kokoro_backend, "build", _stub_build)
     epub: Path = request.getfixturevalue(fixture_name)
     extra = () if granularity == "sentence" else ("--granularity", "word")
     config = _config(epub, tmp_path, *extra)
@@ -511,9 +508,7 @@ def test_narrated_output_is_epubcheck_clean(
 
 
 @pytest.mark.skipif(
-    shutil.which("ffmpeg") is None
-    or not _EPUBCHECK_JAR.is_file()
-    or _java_executable() is None,
+    not HAS_FFMPEG or not _EPUBCHECK_JAR.is_file() or _java_executable() is None,
     reason="acceptance needs ffmpeg + epubcheck jar + java",
 )
 @pytest.mark.parametrize("fixture_name", ["minimal_epub_path", "minimal_epub2_path"])
@@ -523,10 +518,7 @@ def test_opus_output_is_epubcheck_clean(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    def _build(_config: RunConfig) -> _StubBackend:
-        return _StubBackend()
-
-    monkeypatch.setattr(kokoro_backend, "build", _build)
+    monkeypatch.setattr(kokoro_backend, "build", _stub_build)
     epub: Path = request.getfixturevalue(fixture_name)
     config = _config(epub, tmp_path, "--audio-format", "opus")
 

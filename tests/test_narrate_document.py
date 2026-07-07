@@ -1,28 +1,24 @@
 """Integration test for the per-chapter narration wiring (real ffmpeg encode)."""
 
 import math
-import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import HAS_FFMPEG
 from lxml import etree
 from numpy.typing import NDArray
+from xhtml_documents import parse_body as _parse
 
 from spantrack import chapter_sidecar, pipeline
 from spantrack.lexicon import Lexicon
-from spantrack.lxml_reading import XmlElement, hardened_parser
 from spantrack.run_config import AudioFormat, Granularity
 from spantrack.sentence_cache import SentenceCache
 from spantrack.tts.backend import TokenTimestamp
 
-_XHTML = "http://www.w3.org/1999/xhtml"
 _SMIL = "http://www.w3.org/ns/SMIL"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None,
-    reason="ffmpeg not installed",
-)
+pytestmark = pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
 
 
 class _FakeBackend:
@@ -52,14 +48,6 @@ class _FakeBackend:
         pcm = np.full(12_000, 0.5, dtype=np.float32)  # 0.5s at 24 kHz, all voiced
 
         return pcm, (TokenTimestamp(word, 0.0, 0.5, ""),)
-
-
-def _parse(body: str) -> XmlElement:
-    doc = (
-        f'<html xmlns="{_XHTML}"><head><title>t</title></head>'
-        f"<body>{body}</body></html>"
-    )
-    return etree.fromstring(doc.encode(), hardened_parser())
 
 
 def _context(backend: _FakeBackend, cache_root: Path) -> pipeline.NarrationContext:
@@ -160,6 +148,21 @@ class _SilentFake(_FakeBackend):
         return np.zeros(12_000, dtype=np.float32), (TokenTimestamp(text, 0.0, 0.5, ""),)
 
 
+class _LastSilentFake(_FakeBackend):
+    """Voice each sentence except one containing 'silent', trimmed to silence."""
+
+    def synthesize(
+        self,
+        text: str,
+    ) -> tuple[NDArray[np.float32], tuple[TokenTimestamp, ...] | None]:
+        if "silent" in text.lower():
+            return np.zeros(12_000, dtype=np.float32), (
+                TokenTimestamp(text, 0.0, 0.5, ""),
+            )
+
+        return super().synthesize(text)
+
+
 def _word_context(backend: _FakeBackend, cache_root: Path) -> pipeline.NarrationContext:
     return pipeline.NarrationContext(
         backend=backend,
@@ -213,3 +216,41 @@ def test_word_mode_skips_a_silent_chapter_without_crashing(tmp_path: Path):
 
     assert result.sentence_count == 0  # empty-tuple tokens -> no par, chapter skipped
     assert not targets.audio_path.exists()
+
+
+def test_sentence_mode_skips_a_fully_silent_chapter(tmp_path: Path):
+    targets = _targets(tmp_path, "silent")
+
+    result = pipeline.narrate_document(
+        _context(_SilentFake(), tmp_path / "cache"),
+        _parse("<p>Hello world.</p>"),  # a single sentence that trims to silence
+        targets,
+    )
+
+    # Mirrors word mode: a chapter with nothing highlightable is skipped, never written
+    # as a SMIL whose only <par> has clipBegin == clipEnd (invalid, epubcheck MED-009).
+    assert result.sentence_count == 0
+    assert not targets.audio_path.exists()
+    assert not targets.smil_path.exists()
+
+
+def test_sentence_mode_drops_the_zero_length_par_of_a_trailing_silent_sentence(
+    tmp_path: Path,
+):
+    root = _parse("<p>First sentence here. This one is silent.</p>")
+    targets = _targets(tmp_path, "chapter1")
+
+    result = pipeline.narrate_document(
+        _context(_LastSilentFake(), tmp_path / "cache"),
+        root,
+        targets,
+    )
+
+    # The voiced sentence is highlighted; the trailing silent sentence's clip is
+    # zero-length, so it emits no <par> yet is still recorded in the sidecar.
+    pars = etree.fromstring(targets.smil_path.read_bytes()).findall(
+        f".//{{{_SMIL}}}par"
+    )
+    assert len(pars) == 1
+    assert result.sentence_count == 2
+    assert len(chapter_sidecar.read(targets.sidecar_path).sentences) == 2

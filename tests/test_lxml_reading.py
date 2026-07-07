@@ -52,6 +52,16 @@ def test_parse_xml_file_or_none_returns_none_for_malformed(tmp_path: Path):
     assert parse_xml_file_or_none(path) is None
 
 
+def test_parse_xml_file_raises_on_malformed(tmp_path: Path):
+    # opf, pipeline, and epub2_upgrade rely on this raising contract propagating, and
+    # parse_xml_file_or_none relies on catching it; lock it directly.
+    path = tmp_path / "bad.xml"
+    path.write_text("<html><body><p>oops</wrong></body></html>", encoding="utf-8")
+
+    with pytest.raises(etree.XMLSyntaxError):
+        parse_xml_file(path)
+
+
 def test_hardened_parser_does_not_expand_external_entities(tmp_path: Path):
     # XXE guard: a SYSTEM entity pointing at a local file must never be expanded, so its
     # contents can't leak into the parsed tree. Locks resolve_entities=False / load_dtd=

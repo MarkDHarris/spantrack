@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from lxml import etree
+from xhtml_documents import xhtml_document
 
 from spantrack import epub2_upgrade, epub_container, opf
 from spantrack.lxml_reading import XmlElement
@@ -89,11 +90,7 @@ def _ncx(navmap_inner: str) -> str:
 
 
 def _doc(title: str) -> str:
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html>'
-        '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
-        f"<title>{title}</title></head><body><p>x</p></body></html>"
-    )
+    return xhtml_document("<p>x</p>", title=title)
 
 
 def _unzip(epub_path: Path, tmp_path: Path) -> Path:
@@ -436,6 +433,61 @@ def test_free_nav_target_avoids_existing_names(tmp_path: Path):
     # overwrite the stale file and still pass the existence check above.
     assert nav.item_id == "nav-1"
     assert nav.href.endswith("nav-1.xhtml")
+
+
+def test_free_nav_target_avoids_non_manifest_opf_ids(tmp_path: Path):
+    # A non-manifest OPF element (here a dc:title) already carries id="nav". Because
+    # XML ids are document-unique and _patch_opf injects the nav item into the OPF tree,
+    # minting it as id="nav" would produce a duplicate-id OPF. The generator must step
+    # past the id to "nav-1", though no manifest item claims "nav".
+    manifest = (
+        '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+    )
+    metadata = (
+        '<dc:identifier id="pub-id">urn:uuid:2</dc:identifier>'
+        '<dc:title id="nav">T</dc:title><dc:language>en</dc:language>'
+    )
+    book = _make_epub2(
+        tmp_path / "book",
+        _opf2(manifest, '<itemref idref="c1"/>', metadata=metadata),
+        ncx_body=_ncx(
+            '<navPoint id="c1"><navLabel><text>One</text></navLabel>'
+            '<content src="c1.xhtml"/></navPoint>',
+        ),
+        docs={"c1.xhtml": _doc("One")},
+    )
+
+    package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
+
+    root = etree.parse(str(book / package.opf_path)).getroot()
+    ids = [value for el in root.iter() if (value := el.get("id"))]
+    assert len(ids) == len(set(ids))  # no duplicate id anywhere in the OPF
+
+    nav = package.nav_item()
+    assert nav is not None
+    assert nav.item_id == "nav-1"  # stepped past the metadata element's id="nav"
+
+
+def test_spine_fallback_tolerates_a_malformed_content_document(tmp_path: Path):
+    # With an empty navMap the toc falls back to the spine, labelling each entry by its
+    # document <title>. A single malformed content doc must degrade to the stem, not
+    # abort the whole upgrade with an XMLSyntaxError.
+    manifest = (
+        '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+    )
+    book = _make_epub2(
+        tmp_path / "book",
+        _opf2(manifest, '<itemref idref="c1"/>'),
+        ncx_body=_ncx(""),  # empty navMap -> spine fallback
+        docs={"c1.xhtml": "<html><head><title>unclosed"},  # malformed XHTML
+    )
+
+    package = epub2_upgrade.upgrade(book, modified=_MODIFIED)
+
+    toc = _nav_href_to_label(_nav_root(book, package), "toc")
+    assert toc == {"c1.xhtml": "c1"}  # labelled by the stem, degraded gracefully
 
 
 _CH_MANIFEST = (

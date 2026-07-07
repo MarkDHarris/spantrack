@@ -42,6 +42,11 @@ class _FakeBackend:
         return pcm, tokens
 
 
+# Static conformance: pyright strict rejects a signature drift in `_FakeBackend` here.
+# The runtime `isinstance` checks below only see method presence, not signatures.
+_STATIC_CONFORMANCE: TTSBackend = _FakeBackend()
+
+
 class _NoSynthesize:
     """A backend with the lexicon hooks but missing `synthesize`."""
 
@@ -77,12 +82,6 @@ def test_partial_implementation_is_not_a_backend():
 
 def test_backend_without_synthesize_is_not_a_backend():
     assert not isinstance(_NoSynthesize(), TTSBackend)
-
-
-def test_fake_type_checks_against_protocol():
-    # A static conformance check: pyright strict verifies the method signatures.
-    backend: TTSBackend = _FakeBackend()
-    assert isinstance(backend, TTSBackend)
 
 
 def test_synthesize_returns_pcm_and_timestamps():

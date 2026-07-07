@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -104,7 +103,7 @@ def test_boolean_flags_set():
         ["book.epub", "--bitrate", "fast"],
     ],
 )
-def test_invalid_arguments_exit_code_2(argv: Sequence[str] | None):
+def test_invalid_arguments_exit_code_2(argv: list[str]):
     with pytest.raises(SystemExit) as excinfo:
         cli.parse_args(argv)
 

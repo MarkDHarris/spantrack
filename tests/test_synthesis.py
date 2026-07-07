@@ -58,6 +58,16 @@ def _padded_signal() -> NDArray[np.float32]:
     )
 
 
+def _leading_signal() -> NDArray[np.float32]:
+    # 0.5s of signal from the first sample, then 0.25s of trailing silence (no lead).
+    return np.concatenate(
+        [
+            np.full(12_000, 0.5, dtype=np.float32),
+            np.zeros(6_000, dtype=np.float32),
+        ],
+    )
+
+
 def test_cache_miss_synthesizes_trims_and_stores(tmp_path: Path):
     tokens = (TokenTimestamp("hi", 0.5, 1.0, ""),)
     backend = _FakeBackend(_padded_signal(), tokens)
@@ -124,3 +134,16 @@ def test_all_silence_drops_stale_timestamps(tmp_path: Path):
 
     assert len(pcm) == 0
     assert out_tokens == ()
+
+
+def test_no_leading_silence_keeps_timestamps_unshifted(tmp_path: Path):
+    # With no leading silence to trim (lead == 0), tokens pass through verbatim while
+    # the trailing silence is still removed. Every other signal-bearing test leads with
+    # silence, so this is the sole cover for the lead == 0 branch in _trim_silence.
+    tokens = (TokenTimestamp("hi", 0.0, 0.5, ""),)
+    backend = _FakeBackend(_leading_signal(), tokens)
+
+    pcm, out_tokens = synthesize_sentence(backend, SentenceCache(root=tmp_path), "hi")
+
+    assert len(pcm) == 12_000  # trailing silence trimmed; nothing to trim at the lead
+    assert out_tokens == tokens  # unshifted, since lead == 0

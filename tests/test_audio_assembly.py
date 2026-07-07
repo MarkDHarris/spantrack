@@ -1,7 +1,6 @@
 """Tests for chapter audio assembly (gap insertion, edge fades, clip offsets)."""
 
 import math
-import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -9,6 +8,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 import soundfile as sf  # pyright: ignore[reportMissingTypeStubs]
+from conftest import HAS_FFMPEG
 
 from spantrack.audio_assembly import (
     BreakAfter,
@@ -198,7 +198,7 @@ def test_encode_raises_on_nonzero_exit(tmp_path: Path):
         )
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
 def test_encode_produces_a_playable_mp3(tmp_path: Path):
     out = tmp_path / "chapter.mp3"
 
@@ -210,7 +210,7 @@ def test_encode_produces_a_playable_mp3(tmp_path: Path):
     assert data[:3] == b"ID3" or data[0] == 0xFF
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
 def test_encode_produces_a_playable_opus(tmp_path: Path):
     out = tmp_path / "chapter.opus"
 

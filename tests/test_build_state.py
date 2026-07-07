@@ -116,6 +116,28 @@ def test_wrong_shaped_parameters_is_a_clean_start(tmp_path: Path):
     assert not build_state.load(path, _parameters()).is_done("ch1.xhtml")
 
 
+def test_uncoercible_parameter_value_is_a_clean_start(tmp_path: Path):
+    # A well-shaped payload whose values are present but uncoercible (speed "fast") must
+    # restart cleanly via the ValueError/TypeError arm of _read's except, not just the
+    # KeyError arm a missing key hits.
+    path = tmp_path / "build.json"
+    path.write_text(
+        _stored(
+            parameters={
+                "voice": "af_heart",
+                "speed": "fast",  # float("fast") raises ValueError inside _read
+                "granularity": "sentence",
+                "audio_format": "mp3",
+                "bitrate": 64_000,
+                "selection": ["ch1.xhtml", "ch2.xhtml"],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    assert not build_state.load(path, _parameters()).is_done("ch1.xhtml")
+
+
 def test_save_is_byte_deterministic(tmp_path: Path):
     path = tmp_path / "build.json"
     state = build_state.load(path, _parameters())

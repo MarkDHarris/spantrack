@@ -11,12 +11,25 @@ import unicodedata
 
 import pytest
 
-from spantrack.text_normalization import normalize
+from spantrack.text_normalization import collapse_whitespace, normalize
 
 
 def moji(correct: str) -> str:
     """Return `correct` mojibaked: its UTF-8 bytes mis-decoded as latin-1."""
     return correct.encode("utf-8").decode("latin-1")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("  a \t\n b  ", "a b"),
+        ("", ""),
+        ("   ", ""),
+        ("one", "one"),
+    ],
+)
+def test_collapse_whitespace(raw: str, expected: str):
+    assert collapse_whitespace(raw) == expected
 
 
 # (name, intent, raw, expected): every row validated against the pipeline.

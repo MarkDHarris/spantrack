@@ -23,7 +23,9 @@ from spantrack.lxml_reading import (
     XmlElement,
     document_ids,
     hardened_parser,
+    join_fragment,
     parse_xml_file,
+    parse_xml_file_or_none,
     qname,
     split_fragment,
 )
@@ -114,7 +116,8 @@ def upgrade(container_root: Path, *, modified: str) -> Package:
     base_dir = posixpath.dirname(package.opf_path)
     toc = _toc_entries(container_root, package, base_dir)
     landmarks = _landmark_entries(package, base_dir)
-    nav_id, nav_filename = _free_nav_target(package, base_dir)
+    opf_root = parse_xml_file(container_root / package.opf_path)
+    nav_id, nav_filename = _free_nav_target(package, base_dir, opf_root)
 
     nav_path = container_root / posixpath.join(base_dir, nav_filename)
     nav_path.write_bytes(_render_nav(toc, landmarks))
@@ -402,16 +405,26 @@ def _normalize_content_doctypes(container_root: Path, package: Package) -> None:
 
 
 def _document_title(path: Path) -> str:
-    if not path.is_file():
+    # Missing or malformed spine document degrades to the filename stem via the caller's
+    # `... or stem`, never aborting the whole upgrade.
+    root = parse_xml_file_or_none(path)
+    if root is None:
         return ""
 
-    title = parse_xml_file(path).find(f"{_XHTML_HEAD}/{_XHTML_TITLE}")
+    title = root.find(f"{_XHTML_HEAD}/{_XHTML_TITLE}")
 
     return (title.text or "").strip() if title is not None else ""
 
 
-def _free_nav_target(package: Package, base_dir: str) -> tuple[str, str]:
-    ids = {item.item_id for item in package.manifest}
+def _free_nav_target(
+    package: Package,
+    base_dir: str,
+    opf_root: XmlElement,
+) -> tuple[str, str]:
+    # XML ids are document-unique and _patch_opf injects the nav item into the OPF tree,
+    # so the nav id must dodge every id in the OPF, not just manifest item ids: a
+    # non-manifest <dc:identifier id="nav"> collides with the injected item too.
+    ids = {item.item_id for item in package.manifest} | document_ids(opf_root)
     hrefs = {item.href for item in package.manifest}
 
     nav_id = _unused(_NAV_BASE_NAME, lambda candidate: candidate in ids)
@@ -444,11 +457,11 @@ def _resolve_ncx_src(ncx_dir: str, src: str) -> str:
     path, fragment = split_fragment(src)
     resolved = posixpath.normpath(posixpath.join(ncx_dir, path))
 
-    return f"{resolved}#{fragment}" if fragment else resolved
+    return join_fragment(resolved, fragment)
 
 
 def _relativize(resolved_href: str, base_dir: str) -> str:
     path, fragment = split_fragment(resolved_href)
     relative = posixpath.relpath(path, base_dir or ".")
 
-    return f"{relative}#{fragment}" if fragment else relative
+    return join_fragment(relative, fragment)

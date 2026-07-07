@@ -129,7 +129,7 @@ class NarrationResult:
 class _BuildLayout:
     """Where generated artifacts live for one build, relative to the container."""
 
-    book_dir: Path
+    container_root: Path
     opf_dir: str
     css_opf_href: str
     sidecars_dir: Path
@@ -179,11 +179,13 @@ def run(
     # Unpack fresh over any previous copy: unzip overwrites the original members, while
     # generated audio/SMIL/CSS persist so a resumed run reuses checkpointed chapters.
     # --clean discards the whole work dir first.
-    book_dir = config.work_dir / BOOK_SUBDIR
-    archive_order = epub_container.unzip(config.input, book_dir)
-    package = epub2_upgrade.upgrade(book_dir, modified=_source_modified(config.input))
+    container_root = config.work_dir / BOOK_SUBDIR
+    archive_order = epub_container.unzip(config.input, container_root)
+    package = epub2_upgrade.upgrade(
+        container_root, modified=_source_modified(config.input)
+    )
 
-    landmarks = narration_set.read_landmarks(book_dir, package)
+    landmarks = narration_set.read_landmarks(container_root, package)
     selection = narration_set.apply_overrides(
         narration_set.select(package, landmarks=landmarks),
         include=config.include,
@@ -193,19 +195,19 @@ def run(
 
     # Refuse a malformed content document whose root is not XHTML-namespaced before it
     # is silently narrated as empty; runs before projection so --dry-run fails too.
-    content_namespace.require_xhtml_namespace(book_dir, selection.documents)
+    content_namespace.require_xhtml_namespace(container_root, selection.documents)
 
     if config.oov_report:
         reporter.selection(selection)
         words = oov_report.find_oov(
-            _normalized_sentences(book_dir, selection.documents),
+            _normalized_sentences(container_root, selection.documents),
             oov_report.build_g2p(british=config.lang is Language.EN_GB),
         )
         reporter.oov(words)
         return 0
 
     projection = narration_projection.project(
-        book_dir,
+        container_root,
         selection.documents,
         bitrate=config.bitrate,
         speed=config.speed,
@@ -219,7 +221,7 @@ def run(
     factory = backend_factory if backend_factory is not None else kokoro_backend.build
     _narrate_and_package(config, reporter, package, selection, factory)
 
-    epub_container.repack(book_dir, config.output, order=archive_order)
+    epub_container.repack(container_root, config.output, order=archive_order)
     reporter.info(f"wrote {config.output}")
 
     if config.validate:
@@ -235,14 +237,14 @@ def _narrate_and_package(
     selection: narration_set.Selection,
     backend_factory: BackendFactory,
 ) -> None:
-    book_dir = config.work_dir / BOOK_SUBDIR
+    container_root = config.work_dir / BOOK_SUBDIR
     backend = backend_factory(config)
     opf_dir = posixpath.dirname(package.opf_path)
     css_opf_href = highlight_css.write_stylesheet(
-        book_dir / opf_dir if opf_dir else book_dir
+        container_root / opf_dir if opf_dir else container_root
     )
     layout = _BuildLayout(
-        book_dir=book_dir,
+        container_root=container_root,
         opf_dir=opf_dir,
         css_opf_href=css_opf_href,
         sidecars_dir=config.work_dir / "sidecars",
@@ -272,7 +274,7 @@ def _narrate_and_package(
             chapters.narrated(document.href)
 
     opf.patch_opf_media_overlays(
-        book_dir / package.opf_path,
+        container_root / package.opf_path,
         overlays,
         stylesheet=opf.ManifestEntry(_CSS_ITEM_ID, css_opf_href, _CSS_MEDIA_TYPE),
         narrator=config.voice,
@@ -287,7 +289,7 @@ def _narrate_chapter(
     document: narration_set.Document,
 ) -> opf.ChapterOverlay | None:
     paths = _chapter_paths(layout, document, context.audio_format)
-    root = lxml_reading.parse_xml_file(layout.book_dir / document.href)
+    root = lxml_reading.parse_xml_file(layout.container_root / document.href)
 
     duration_s = _reuse_duration(state, paths, document)
     if duration_s is None:
@@ -313,7 +315,7 @@ def _narrate_chapter(
         _inject_spans(context.granularity, root)
 
     highlight_css.link_into_head(root, paths.css_href_rel_doc)
-    _write_content(root, layout.book_dir / document.href)
+    _write_content(root, layout.container_root / document.href)
 
     return opf.ChapterOverlay(
         content_item_id=document.item_id,
@@ -346,8 +348,8 @@ def _chapter_paths(
     opf_base = layout.opf_dir or "."
 
     return _ChapterPaths(
-        audio_path=layout.book_dir / audio_container,
-        smil_path=layout.book_dir / smil_container,
+        audio_path=layout.container_root / audio_container,
+        smil_path=layout.container_root / smil_container,
         sidecar_path=layout.sidecars_dir / f"{stem}.tokens.json",
         doc_href_rel_smil=posixpath.basename(document.href),
         audio_href_rel_smil=posixpath.relpath(audio_container, doc_base),
@@ -381,16 +383,10 @@ def narrate_document(
     if not spans:
         return NarrationResult(duration_s=0.0, sentence_count=0)
 
-    synthesized = [_synthesize_text(context, span.display_text) for span in spans]
-    chapter = audio_assembly.assemble(
-        [
-            (synth.pcm, span.break_after)
-            for span, synth in zip(spans, synthesized, strict=True)
-        ],
-    )
+    synthesized, chapter = _synthesize_and_assemble(context, spans)
 
     sidecar_sentences: list[chapter_sidecar.SidecarSentence] = []
-    smil_sentences: list[smil.SyncUnit] = []
+    smil_units: list[smil.SyncUnit] = []
     for span, synth, clip in zip(spans, synthesized, chapter.clips, strict=True):
         sidecar_sentences.append(
             chapter_sidecar.SidecarSentence(
@@ -403,20 +399,16 @@ def narrate_document(
                 tokens=_shift_tokens(synth.tokens, clip.clip_begin_s),
             ),
         )
-        smil_sentences.append(
-            smil.SyncUnit(
-                span.span_id,
-                clip.clip_begin_s,
-                clip.clip_end_s,
-            ),
-        )
+        # Drop a zero-duration clip: a sentence trimmed to silence (typically the final
+        # one, which absorbs no inter-sentence gap) would emit a clipBegin == clipEnd
+        # <par> that epubcheck (MED-009) rejects. Word mode filters the same way.
+        if _has_duration(clip.clip_begin_s, clip.clip_end_s):
+            smil_units.append(
+                smil.SyncUnit(span.span_id, clip.clip_begin_s, clip.clip_end_s),
+            )
 
     return _write_chapter_outputs(
-        context,
-        targets,
-        chapter,
-        sidecar_sentences,
-        smil_sentences,
+        context, targets, chapter, sidecar_sentences, smil_units
     )
 
 
@@ -459,19 +451,52 @@ def _synthesize_text(context: NarrationContext, display_text: str) -> _Synthesis
     )
 
 
+class _Injected(Protocol):
+    """A synthesizable unit: its text and the break that sets the gap after it."""
+
+    @property
+    def display_text(self) -> str: ...
+
+    @property
+    def break_after(self) -> audio_assembly.BreakAfter: ...
+
+
+def _synthesize_and_assemble(
+    context: NarrationContext,
+    injected: Sequence[_Injected],
+) -> tuple[list[_Synthesis], audio_assembly.AssembledChapter]:
+    """Synthesize each unit through the cache and assemble the chapter waveform.
+
+    Shared by both granularities: the sentence stays the synthesis and assembly unit in
+    either mode, so the `_Synthesis` list and the gapless `AssembledChapter` (clip
+    offsets included) are derived identically before each mode builds its own rows.
+    """
+    synthesized = [_synthesize_text(context, unit.display_text) for unit in injected]
+    chapter = audio_assembly.assemble(
+        [
+            (synth.pcm, unit.break_after)
+            for unit, synth in zip(injected, synthesized, strict=True)
+        ],
+    )
+    return synthesized, chapter
+
+
 def _write_chapter_outputs(
     context: NarrationContext,
     targets: DocumentTargets,
     chapter: audio_assembly.AssembledChapter,
     sidecar_sentences: list[chapter_sidecar.SidecarSentence],
-    smil_sentences: list[smil.SyncUnit],
+    smil_units: list[smil.SyncUnit],
 ) -> NarrationResult:
-    """Encode the chapter mp3, write the sidecar + SMIL, and report the result.
+    """Encode the chapter audio, write the sidecar + SMIL, and report the result.
 
-    Each granularity builds its own sidecar/`<par>` rows and applies its own
-    empty-`<par>` guard, then hands them here. Encoding runs after the rows exist, so a
-    chapter with nothing to highlight is skipped upstream before any audio is written.
+    A chapter with no highlightable `<par>` (every clip trimmed to silence) is skipped
+    before anything is written, so the audio is never left unreferenced by the overlay.
+    Both granularities funnel their rows here, so this skip guard cannot diverge.
     """
+    if not smil_units:
+        return NarrationResult(duration_s=0.0, sentence_count=0)
+
     for output in (targets.audio_path, targets.smil_path, targets.sidecar_path):
         output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -485,7 +510,7 @@ def _write_chapter_outputs(
         smil.build_smil(
             targets.doc_href,
             targets.audio_href,
-            smil_sentences,
+            smil_units,
         ),
     )
 
@@ -505,22 +530,16 @@ def _narrate_words(
         # A chapter with no source words (e.g. a "* * *" divider page) is not narrated.
         return NarrationResult(duration_s=0.0, sentence_count=0)
 
-    synthesized = [_synthesize_text(context, s.display_text) for s in sentences]
-    chapter = audio_assembly.assemble(
-        [
-            (synth.pcm, sentence.break_after)
-            for sentence, synth in zip(sentences, synthesized, strict=True)
-        ],
-    )
+    synthesized, chapter = _synthesize_and_assemble(context, sentences)
 
     sidecar_sentences: list[chapter_sidecar.SidecarSentence] = []
-    smil_sentences: list[smil.SyncUnit] = []
+    smil_units: list[smil.SyncUnit] = []
     for sentence, synth, clip in zip(
         sentences, synthesized, chapter.clips, strict=True
     ):
         tokens = _shift_tokens(synth.tokens, clip.clip_begin_s)
         pars, source_ranges = _word_pars(context, sentence, tokens, clip)
-        smil_sentences.extend(pars)
+        smil_units.extend(pars)
         sidecar_sentences.append(
             chapter_sidecar.SidecarSentence(
                 span_id=sentence.span_id,
@@ -534,18 +553,12 @@ def _narrate_words(
             ),
         )
 
-    if not smil_sentences:
-        # Every word was silent or sub-millisecond, so nothing is highlightable. Skip
-        # the chapter like a non-narrated document; _write_chapter_outputs encodes below
-        # this guard, so no unreferenced audio is written or orphaned.
-        return NarrationResult(duration_s=0.0, sentence_count=0)
-
     return _write_chapter_outputs(
         context,
         targets,
         chapter,
         sidecar_sentences,
-        smil_sentences,
+        smil_units,
     )
 
 
@@ -704,13 +717,13 @@ def _spantrack_version() -> str:
 
 
 def _normalized_sentences(
-    book_dir: Path,
+    container_root: Path,
     documents: Sequence[narration_set.Document],
 ) -> Iterator[str]:
     # Preview the text synthesis will see, reusing the segment + normalize stages.
     # The tree is injected in memory and discarded; the container is untouched.
     for document in documents:
-        root = lxml_reading.parse_xml_file_or_none(book_dir / document.href)
+        root = lxml_reading.parse_xml_file_or_none(container_root / document.href)
         if root is None:
             continue
 

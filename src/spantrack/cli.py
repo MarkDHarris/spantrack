@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--voice", default="af_heart", help="TTS voice")
     parser.add_argument(
         "--speed",
-        type=_positive_float,
+        type=_parse_positive_float,
         default=1.0,
         help="Speech speed multiplier",
     )
@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bitrate",
         default="64k",
-        type=_valid_bitrate,
+        type=_parse_bitrate,
         help="Audio bitrate",
     )
     parser.add_argument(
@@ -207,7 +207,7 @@ def _to_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
-def _valid_bitrate(raw: str) -> str:
+def _parse_bitrate(raw: str) -> str:
     # Validate at parse time so a bad rate exits with argparse's code 2.
     try:
         parse_bitrate(raw)
@@ -217,7 +217,7 @@ def _valid_bitrate(raw: str) -> str:
     return raw
 
 
-def _positive_float(raw: str) -> float:
+def _parse_positive_float(raw: str) -> float:
     value = float(raw)
     if value <= 0:
         err_msg = "must be greater than 0"

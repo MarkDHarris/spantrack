@@ -26,15 +26,18 @@ def test_unzip_preserves_mimetype_bytes(minimal_epub_path: Path, tmp_path: Path)
     assert (dest / "mimetype").read_bytes() == b"application/epub+zip"
 
 
-def test_unzip_returns_member_names_mimetype_first(
+def test_unzip_returns_member_names_in_archive_order(
     minimal_epub_path: Path,
     tmp_path: Path,
 ):
     dest = tmp_path / "book"
     names = epub_container.unzip(minimal_epub_path, dest)
 
-    assert names[0] == "mimetype"
-    assert "OEBPS/content.opf" in names
+    with zipfile.ZipFile(minimal_epub_path) as zf:
+        expected = [info.filename for info in zf.infolist() if not info.is_dir()]
+    # The documented contract is archive order with directory entries excluded, not the
+    # fixture's incidental mimetype-first storage.
+    assert names == expected
 
 
 @pytest.mark.parametrize(

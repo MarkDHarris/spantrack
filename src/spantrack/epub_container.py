@@ -6,7 +6,9 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path, PureWindowsPath
 
-MIMETYPE_NAME = "mimetype"
+__all__ = ["repack", "unzip"]
+
+_MIMETYPE_NAME = "mimetype"
 
 
 def unzip(epub_path: Path, dest_dir: Path) -> list[str]:
@@ -61,13 +63,13 @@ def repack(
     Raises:
         ValueError: If source_dir has no `mimetype` file.
     """
-    mimetype = source_dir / MIMETYPE_NAME
+    mimetype = source_dir / _MIMETYPE_NAME
     if not mimetype.is_file():
-        err_msg = f"missing {MIMETYPE_NAME} in {source_dir}"
+        err_msg = f"missing {_MIMETYPE_NAME} in {source_dir}"
         raise ValueError(err_msg)
 
     with zipfile.ZipFile(epub_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        mimetype_info = zipfile.ZipInfo(MIMETYPE_NAME)
+        mimetype_info = zipfile.ZipInfo(_MIMETYPE_NAME)
         mimetype_info.compress_type = zipfile.ZIP_STORED
 
         archive.writestr(mimetype_info, mimetype.read_bytes())
@@ -82,7 +84,7 @@ def _ordered_members(source_dir: Path, order: Sequence[str] | None) -> list[str]
         for path in source_dir.rglob("*")
         if path.is_file()
     }
-    remaining.discard(MIMETYPE_NAME)
+    remaining.discard(_MIMETYPE_NAME)
 
     ordered: list[str] = []
     for name in order or ():

@@ -1,3 +1,4 @@
+import shutil
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -5,6 +6,10 @@ from pathlib import Path
 import pytest
 
 type TreeReader = Callable[[Path], dict[str, bytes]]
+
+# Single availability probe for the optional external tools some suites gate on, so the
+# ffmpeg check does not drift into four slightly different forms across the test tree.
+HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MINIMAL_EPUB_SRC = FIXTURES / "minimal_epub"

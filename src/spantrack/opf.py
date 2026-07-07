@@ -16,6 +16,7 @@ from spantrack.lxml_reading import (
     OPF_NS,
     XmlElement,
     hardened_parser,
+    join_fragment,
     parse_xml_file,
     qname,
     split_fragment,
@@ -34,6 +35,7 @@ __all__ = [
     "SpineItem",
     "patch_opf_media_overlays",
     "read_package",
+    "resolve_within_container",
 ]
 
 _CONTAINER_PATH = "META-INF/container.xml"
@@ -315,7 +317,7 @@ def _require_within_container(base_dir: str, href: str) -> str:
 
     fragment = split_fragment(href)[1]
 
-    return f"{resolved}#{fragment}" if fragment else resolved
+    return join_fragment(resolved, fragment)
 
 
 SMIL_MEDIA_TYPE = "application/smil+xml"

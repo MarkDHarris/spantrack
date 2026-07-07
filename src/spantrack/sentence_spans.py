@@ -356,6 +356,12 @@ def _merge_units(
     ranges: list[tuple[int, int]],
     segments: list[_Segment],
 ) -> list[tuple[int, int]]:
+    """Coalesce adjacent ranges whose shared boundary falls inside one inline element.
+
+    Preserves the invariant that a span never splits an inline element: when the end of
+    one range and the start of the next resolve to the same `_ChildRun`, they merge into
+    a single unit. Shared by both sentence and word merging.
+    """
     units: list[tuple[int, int]] = []
     start, end = ranges[0]
     for next_start, next_end in ranges[1:]:
@@ -363,7 +369,7 @@ def _merge_units(
         right = _segment_at(next_start, segments)
         if left is right and isinstance(left, _ChildRun):
             # The boundary falls inside a single inline element; splitting would break
-            # it, so the two sentences become one sync unit.
+            # it, so the two adjacent ranges coalesce into one unit.
             end = next_end
         else:
             units.append((start, end))

@@ -16,6 +16,7 @@ __all__ = [
     "XmlElement",
     "document_ids",
     "hardened_parser",
+    "join_fragment",
     "parse_xml_file",
     "parse_xml_file_or_none",
     "qname",
@@ -95,3 +96,12 @@ def split_fragment(href: str) -> tuple[str, str]:
     path, _, fragment = href.partition("#")
 
     return path, fragment
+
+
+def join_fragment(path: str, fragment: str) -> str:
+    """Reattach a fragment to a path, the inverse of `split_fragment`.
+
+    Returns:
+        `f"{path}#{fragment}"`, or `path` unchanged when `fragment` is empty.
+    """
+    return f"{path}#{fragment}" if fragment else path

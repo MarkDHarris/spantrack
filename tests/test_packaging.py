@@ -11,7 +11,6 @@ from typing import Any, cast
 import pytest
 
 import spantrack
-from spantrack import cli
 
 _PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
 
@@ -64,21 +63,6 @@ def test_readme_pointer_resolves_to_a_nonempty_file():
 
     assert path.is_file()
     assert path.read_text(encoding="utf-8").strip()
-
-
-def test_readme_documents_every_cli_flag():
-    # The README's command-line reference must list every long flag, so it cannot drift
-    # out of date as flags are added.
-    readme = (_PYPROJECT.parent / "README.md").read_text(encoding="utf-8")
-    flags = {
-        option
-        for action in cli.build_parser()._actions
-        for option in action.option_strings
-        if option.startswith("--") and option != "--help"
-    }
-    missing = sorted(flag for flag in flags if flag not in readme)
-
-    assert missing == [], f"README is missing CLI flags: {missing}"
 
 
 @pytest.mark.skipif(

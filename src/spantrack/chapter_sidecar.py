@@ -1,7 +1,7 @@
 """Versioned per-chapter token-timestamp sidecar: the record word-mode SMIL reads.
 
 One sidecar is written per narrated chapter and always persisted. It captures every
-sync unit's chapter-absolute clip interval, its display/normalized text, its cache key,
+sentence's chapter-absolute clip interval, its display/normalized text, its cache key,
 and the per-token timeline, so word-level SMIL can be (re)generated later without
 re-synthesizing any audio.
 
@@ -64,7 +64,7 @@ class ChapterAudio:
 
 @dataclass(frozen=True, slots=True)
 class SidecarSentence:
-    """One sync unit's entry: its chapter-absolute clip, text, cache key, and tokens.
+    """One sentence's entry: its chapter-absolute clip, text, cache key, and tokens.
 
     `tokens` is None when the backend emitted no timestamps. The token times are
     chapter-absolute (already shifted by `clip_begin_s`), not sentence-relative.
