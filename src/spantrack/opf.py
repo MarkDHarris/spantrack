@@ -362,19 +362,14 @@ def patch_opf_media_overlays(
     narrator: str,
     active_class: str,
 ) -> None:
-    """Wire media overlays into an OPF: manifest items, attrs, and `media:*` metadata.
-
-    For each overlay, registers the audio + SMIL manifest items, sets `media-overlay`
-    on the content item, and adds a per-overlay `media:duration`. Then adds the total
-    `media:duration`, `media:narrator`, `media:active-class`, and the optional highlight
-    stylesheet item. The OPF is rewritten in place.
-
-    Raises:
-        OpfError: When the OPF has no `<manifest>`/`<metadata>`, or an overlay names a
-            content item absent from the manifest.
-    """
     tree = etree.parse(str(opf_path), hardened_parser())
     root = tree.getroot()
+
+    # 1. Ensure prefix attribute exists on <package>
+    existing_prefix = root.get("prefix", "")
+    media_vocab = "media: http://www.idpf.org/epub/vocab/overlays/#"
+    if "media:" not in existing_prefix:
+        root.set("prefix", f"{existing_prefix} {media_vocab}".strip())
 
     manifest = root.find(qname(OPF_NS, "manifest"))
     metadata = root.find(qname(OPF_NS, "metadata"))
@@ -424,9 +419,11 @@ def patch_opf_media_overlays(
             stylesheet.media_type,
         )
 
+# Append global media overlay metadata without refines attributes
     append_meta(metadata, "media:duration", clock_value(total))
     append_meta(metadata, "media:narrator", narrator)
     append_meta(metadata, "media:active-class", active_class)
+    append_meta(metadata, "media:playback-active-class", "-spantrack-playback-active")
 
     tree.write(str(opf_path), xml_declaration=True, encoding="utf-8")
 
@@ -457,13 +454,17 @@ def append_meta(
     refines: str | None = None,
     scheme: str | None = None,
 ) -> None:
-    """Append a `<metadata><meta>`: property, text, and optional refines/scheme."""
-    meta = etree.SubElement(metadata, qname(OPF_NS, "meta"))
+    """Append a clean <meta> element in the default namespace without 'opf:' prefix."""
+    # Using an unprefixed Element with nsmap={None: OPF_NS} guarantees <meta>, never <opf:meta>
+    meta = etree.Element(qname(OPF_NS, "meta"), nsmap={None: OPF_NS})
     meta.set("property", prop)
-    if refines is not None:
+    
+    # CRITICAL: Only set refines if it is truthy and non-empty
+    if refines:
         meta.set("refines", refines)
 
-    if scheme is not None:
+    if scheme:
         meta.set("scheme", scheme)
 
     meta.text = text
+    metadata.append(meta)

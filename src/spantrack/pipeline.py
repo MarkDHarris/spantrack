@@ -8,6 +8,7 @@ and helpers with one another, but none of them sequences the stages.
 import importlib.metadata
 import posixpath
 import shutil
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -224,11 +225,15 @@ def run(
     if config.dry_run:
         return 0
 
+    start_time = time.perf_counter()
+
     factory = backend_factory if backend_factory is not None else kokoro_backend.build
     _narrate_and_package(config, reporter, package, selection, factory)
 
     epub_container.repack(container_root, config.output, order=archive_order)
-    reporter.info(f"wrote {config.output}")
+
+    elapsed_s = time.perf_counter() - start_time
+    reporter.info(f"wrote {config.output} (elapsed: {_format_elapsed(elapsed_s)})")
 
     if config.validate:
         return _report_validation(validator(config.output), reporter)
@@ -732,3 +737,14 @@ def _report_validation(
 
     reporter.info(f"epubcheck failed with {len(result.messages)} message(s)")
     return 1
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds as human-readable h/m/s (e.g. 38m 46s, 1h 05m 12s, or 14.2s)."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    return f"{minutes}m {secs:02d}s"

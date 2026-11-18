@@ -5,7 +5,9 @@ EPUB XML; keeping one authoritative factory here means a dropped flag can never 
 one module's hardening while the others stay safe.
 """
 
+import html
 from pathlib import Path
+import re
 
 from lxml import etree
 
@@ -35,6 +37,32 @@ XHTML_NS = "http://www.w3.org/1999/xhtml"
 EPUB_NS = "http://www.idpf.org/2007/ops"
 OPF_NS = "http://www.idpf.org/2007/opf"
 
+# The 5 standard XML predefined entities that must remain untouched for well-formedness.
+_XML_PREDEFINED = {"amp", "lt", "gt", "quot", "apos"}
+_NAMED_ENTITY_RE = re.compile(r"&([a-zA-Z]+);")
+
+
+def _sanitize_html_entities(raw_bytes: bytes) -> bytes:
+    """Pre-resolve non-XML HTML named entities into UTF-8 characters.
+
+    Untrusted EPUB XHTML documents frequently contain HTML named entities (e.g. &copy;,
+    &oacute;, &nbsp;) without defining an XHTML DTD. Under the XXE-hardened parser,
+    unresolvable named entities fail as XMLSyntaxError. Replacing them in raw text
+    preserves XXE safety without requiring DTD resolution or network lookups.
+    """
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw_bytes.decode("utf-8", errors="replace")
+
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name in _XML_PREDEFINED:
+            return match.group(0)
+        return html.unescape(match.group(0))
+
+    return _NAMED_ENTITY_RE.sub(_replace, text).encode("utf-8")
+
 
 def hardened_parser() -> etree.XMLParser:
     """Return a fresh lxml parser hardened against XXE for untrusted EPUB input."""
@@ -51,7 +79,8 @@ def parse_xml_file(path: Path) -> XmlElement:
     security posture (a size cap, streaming) lands in one place. Callers own their error
     policy; malformed input raises lxml's `etree.XMLSyntaxError`.
     """
-    return etree.fromstring(path.read_bytes(), hardened_parser())
+    raw_bytes = _sanitize_html_entities(path.read_bytes())
+    return etree.fromstring(raw_bytes, hardened_parser())
 
 
 def parse_xml_file_or_none(path: Path) -> XmlElement | None:

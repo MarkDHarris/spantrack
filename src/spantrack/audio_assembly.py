@@ -4,7 +4,7 @@
 clip boundaries the SMIL stage emits verbatim. Two rules shape it:
 
 1. Gaps fold into the preceding clip. A `break_after` inserts silence between two
-   sentences (250ms sentence / 600ms paragraph / 900ms heading), and each clip runs up
+   sentences (380ms sentence / 800ms paragraph / 1200ms heading), and each clip runs up
    to where the next sentence's audio begins (`clip_end_n == clip_begin_{n+1}`). Gapless
    intervals keep the highlight from flickering in the reader and keep epubcheck from
    flagging overlay gaps -- the pause belongs to the sentence it follows.
@@ -31,6 +31,7 @@ from spantrack.run_config import AudioFormat
 from spantrack.tts.backend import SAMPLE_RATE, Pcm
 
 __all__ = [
+    "OUTPUT_SAMPLE_RATE",
     "AssembledChapter",
     "BreakAfter",
     "ClipInterval",
@@ -42,6 +43,9 @@ __all__ = [
     "encode_chapter",
 ]
 
+# Standard target sampling rate for consumer audio engines (WebKit / Foliate / HTML5 Audio)
+OUTPUT_SAMPLE_RATE = 44100
+
 
 class BreakAfter(enum.StrEnum):
     """The break after a sentence; it sets the silence gap before the next one."""
@@ -51,11 +55,12 @@ class BreakAfter(enum.StrEnum):
     HEADING = "heading"
 
 
-# Inter-sentence pause per break type, in samples, folded into the preceding clip.
+# Audiblez-style natural audiobook pauses:
+# 380ms for sentences, 800ms for paragraphs, 1200ms for headings
 _GAP_SAMPLES: dict[BreakAfter, int] = {
-    BreakAfter.SENTENCE: round(250 / 1000 * SAMPLE_RATE),
-    BreakAfter.PARAGRAPH: round(600 / 1000 * SAMPLE_RATE),
-    BreakAfter.HEADING: round(900 / 1000 * SAMPLE_RATE),
+    BreakAfter.SENTENCE: round(380 / 1000 * SAMPLE_RATE),
+    BreakAfter.PARAGRAPH: round(800 / 1000 * SAMPLE_RATE),
+    BreakAfter.HEADING: round(1200 / 1000 * SAMPLE_RATE),
 }
 
 # Linear fade applied to each unit's leading and trailing edge to suppress join clicks.
@@ -80,13 +85,18 @@ class AssembledChapter:
     duration_s: float
 
 
-def assemble(units: Sequence[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
+def assemble(
+    units: Sequence[tuple[Pcm, BreakAfter]],
+    *,
+    pause_scale: float = 1.0,
+) -> AssembledChapter:
     """Concatenate per-sentence PCM into a chapter with gaps, fades, and clip offsets.
 
     Args:
         units: Ordered `(pcm, break_after)` pairs, one per sentence; `break_after` sets
             the silence gap inserted before the following sentence (the last unit's
             break adds no trailing silence).
+        pause_scale: Multiplier applied to inter-sentence silences (default: 1.0).
 
     Returns:
         The concatenated 24 kHz float32 PCM, one gapless `ClipInterval` per unit
@@ -105,9 +115,10 @@ def assemble(units: Sequence[tuple[Pcm, BreakAfter]]) -> AssembledChapter:
         # The gap belongs to this clip (gapless), so extend the clip past it; the final
         # unit gets none, so the chapter never ends on trailing silence.
         if index != last:
-            gap = _GAP_SAMPLES[break_after]
-            segments.append(np.zeros(gap, dtype=np.float32))
-            cursor += gap
+            gap = round(_GAP_SAMPLES[break_after] * pause_scale)
+            if gap > 0:
+                segments.append(np.zeros(gap, dtype=np.float32))
+                cursor += gap
 
         clips.append(ClipInterval(begin / SAMPLE_RATE, cursor / SAMPLE_RATE))
 
@@ -193,8 +204,8 @@ def encode_chapter(
     The float32 PCM is streamed to ffmpeg as raw little-endian `f32le` on stdin, so no
     intermediate WAV is written. `settings.audio_format` selects the codec (MP3 via
     `libmp3lame`, Opus via `libopus`); the container follows `out_path`'s extension.
-    `locate`/`runner` are injected to keep the stage testable without the binary,
-    mirroring the epubcheck gate.
+    Output audio is resampled to standard 44.1 kHz to ensure clean playback across WebKit,
+    Foliate, and Chromium audio stacks.
 
     Args:
         pcm: The assembled 24 kHz mono float32 chapter waveform.
@@ -215,8 +226,9 @@ def encode_chapter(
         )
         raise FfmpegNotFoundError(msg)
 
-    # ffmpeg wants input options before `-i` and output options after; raw f32le/24 kHz
-    # mono matches the `Pcm` bytes piped on stdin (`-i -`).
+    # Input settings: raw little-endian float32 mono at Kokoro native 24 kHz (SAMPLE_RATE).
+    # Output settings: resample to 44.1 kHz (OUTPUT_SAMPLE_RATE) so webview audio engines
+    # play back at 1.0x pitch and speed without hardware resampling mismatches.
     command = [
         resolved,
         "-loglevel",
@@ -230,6 +242,8 @@ def encode_chapter(
         "1",
         "-i",
         "-",
+        "-ar",
+        str(OUTPUT_SAMPLE_RATE),
         "-c:a",
         _CODECS[settings.audio_format],
         "-b:a",

@@ -18,6 +18,7 @@ from spantrack.lxml_reading import XHTML_NS, XmlElement, qname
 
 __all__ = [
     "ACTIVE_CLASS",
+    "PLAYBACK_ACTIVE_CLASS",
     "link_into_head",
     "stylesheet",
     "write_stylesheet",
@@ -25,19 +26,23 @@ __all__ = [
 
 # The class a reader toggles on the active sentence span; also the media:active-class.
 ACTIVE_CLASS = "-spantrack-active"
+PLAYBACK_ACTIVE_CLASS = "-spantrack-playback-active"
 
 _SPANTRACK_DIR = "spantrack"
 _STYLESHEET_NAME = "highlight.css"
 
-_STYLESHEET = f""".{ACTIVE_CLASS} {{
-  background-color: #fff2a8;
-  color: #1a1a1a;
+# Include both custom classes and the standard EPUB 3 / Apple WebKit classes
+_STYLESHEET = f""".{ACTIVE_CLASS},
+.-epub-media-overlay-active {{
+  background-color: #fff2a8 !important;
+  color: #1a1a1a !important;
 }}
 
 @media (prefers-color-scheme: dark) {{
-  .{ACTIVE_CLASS} {{
-    background-color: #6b5800;
-    color: #f5f5f5;
+  .{ACTIVE_CLASS},
+  .-epub-media-overlay-active {{
+    background-color: #6b5800 !important;
+    color: #f5f5f5 !important;
   }}
 }}
 """

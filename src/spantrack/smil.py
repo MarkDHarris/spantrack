@@ -34,18 +34,16 @@ class SyncUnit:
 
 
 def clock_value(seconds: float) -> str:
-    """Format seconds as a SMIL full-clock value `H:MM:SS.mmm`.
+    """Format seconds as a SMIL full-clock value `HH:MM:SS.mmm`.
 
-    The same grammar serves `<audio>` clip bounds here and OPF `media:duration`.
+    Apple Books requires a 2-digit hour field; single-digit hours cause
+    silent rejection of SMIL clip intervals.
     """
-    # Round to whole milliseconds first, then split integer units, so a bound just under
-    # a boundary carries (59.9996s -> 0:01:00.000, never the invalid 0:00:60.000 that
-    # rounding a float seconds field after the divmod would emit).
     total_ms = round(seconds * 1000)
     hours, rest = divmod(total_ms, 3_600_000)
     minutes, rest = divmod(rest, 60_000)
     secs, ms = divmod(rest, 1000)
-    return f"{hours}:{minutes:02d}:{secs:02d}.{ms:03d}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
 
 def build_smil(
